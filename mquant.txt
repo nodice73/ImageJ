@@ -1,0 +1,61 @@
+// vim: set filetype=javascript :
+
+macro "mquant" {
+    setBatchMode(true);
+    mquant();
+}
+
+function mquant() {
+    FS = File.separator();
+    title =getTitle();
+    path = getDirectory("image");
+    selection_path = path+"selections"+FS;
+
+    selections = getFileList(selection_path);
+
+    close();
+    open(path+title);
+
+    f = File.open(path+"mquant_results.txt");
+    print(f, "slice\tcell\tcen_x\tcen_y\tx\ty\tint");
+    for (i=1;i<=nSlices();i++) {
+        setSlice(i);
+        roiManager("reset");
+        roiManager("open",selection_path+i+".zip");
+        nSels = roiManager("count");
+        for (j=0;j<nSels;j++) {
+            roiManager("select",j);
+            List.setMeasurements;
+            cx = List.getValue("X");
+            cy = List.getValue("Y");
+            // Pixels returned by getSelectionCoordinates are around outside of
+            // visible selection.
+            run("Enlarge...", "enlarge=-2 pixel");
+            getSelectionCoordinates(x, y);
+            for (k=0;k<x.length;k++) {
+                this_bound = new Array(x[k],y[k]);
+                if (k+1 != x.length) {
+                    next_bound = new Array(x[k+1],y[k+1]);
+                }
+                // getSelectionCoordinates returns the set of pixels sufficient
+                // to define the selection boundary.  We want to walk along the
+                // entire boundary.  Either the 'x' or 'y' coordinate will be the
+                // same from one boundary defining point to the next.
+                if (this_bound[0] != next_bound[0]) {
+                    pix = new Array(this_bound[0], next_bound[0]);
+                } else if (this_bound[1] != next_bound[1]) {
+                    pix = new Array(this_bound[1], next_bound[1]);
+                }
+
+                // Step through this array and get the maximum pixel value in a
+                // 4-connected neighborhood.
+                for (l=pix[0];l<pix[1];l++) {
+                    I = maxOf(maxOf(maxOf(maxOf(getPixel(x[k],y[k]),getPixel(x[k]+1,y[k])),getPixel(x[k],y[k]+1)),getPixel(x[k]-1,y[k])),getPixel(x[k],y[k]-1));
+                }
+                print(f, i+"\t"+j+1+"\t"+cx+"\t"+cy+"\t"+x[k]+"\t"+y[k]+"\t"+I);
+            }
+        }
+    }
+    run("Select None");
+    File.close(f);
+}

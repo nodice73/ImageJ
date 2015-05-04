@@ -1,0 +1,231 @@
+// vim: set filetype=javascript shiftwidth=2 tabstop=2 expandtab :
+
+
+macro "process_plates" {
+  //setBatchMode(true);
+  pplates();
+}
+
+function pplates() {
+
+  // Performs analysis (number and area, in pixels) of scanned plates.
+  // Updated for "transparent" mode.
+  //
+  // REQUIRES PLUGIN 'RGB Gray Merge' available on ImageJ website.
+  //
+  // Instructions0.300:
+  //    0.  Make two folders called 'data' and 'images'.  Put the images
+  //        to be analyzed in the 'images' folder.  This macro can live
+  //        anywhere outside of these two folders.
+  //    1.  Open the .tif file to be analyzed.  
+  //    2.  Make a selection for each each plate to be analyzed.  Can
+  //        be arbitrarily shaped:
+  //          a. Draw your selection.
+  //          b. Press 't' to add the selection to the ROI manager.
+  //          c. For clarity, rename the selections (optional):
+  //              i. Click 'Rename'.
+  //              ii. Enter a new name.
+  //          d. For repeatability, save the selections:
+  //              i. Click 'Deselect'.
+  //              ii. Click 'Save'. When the default filename comes up,
+  //                  make sure it ends in '.zip'.  This is how you know
+  //                  it contains multiple selections.  If it ends in '.roi'
+  //                  you are only saving one selection.
+  //    3. Run the macro by going to "Plugins" -> "Macros" -> "Run..." and selecting
+  //       this file.
+  //    4. After analysis, save the 'Summary' window to the 'data' folder.
+  //
+  // Lowest error is acheived between 300 - 400 colonies per plate.
+
+  FS = File.separator();
+
+  MIN_AREA = 5;
+  COUNT_THRESH = 0.60
+  AREA_THRESH  = 0.60
+  MULTI_THRESH = 0.60
+  COUNT_NAME = "counts";
+  AREA_NAME  = "areas";
+  MULTI_NAME = "multi";
+  COMP_NAME  = "comp";
+  RADIUS = 200;
+
+  Dialog.create("Circularity Threshold Parameters");
+  Dialog.addNumber("Minimum area:",MIN_AREA);
+  Dialog.addMessage("Choose minimum circularity values to...");
+  Dialog.addNumber("Count:",COUNT_THRESH);
+  Dialog.addNumber("Consider area:",AREA_THRESH);
+  Dialog.addNumber("Consider a single colony:", MULTI_THRESH);
+  Dialog.show();
+
+  MIN_AREA = Dialog.getNumber();
+  COUNT_THRESH = Dialog.getNumber(); 
+  AREA_THRESH  = Dialog.getNumber(); 
+  MULTI_THRESH = Dialog.getNumber(); 
+
+  id   = getImageID();
+  file = getTitle();
+
+  image_path   = getDirectory("image") + FS;
+  data_path    = image_path +  'data' + FS;
+  outline_path = image_path + 'outlines' + FS;
+  mkdir(data_path);
+  mkdir(outline_path);
+
+  name = replace(file,".tif","");
+
+  nsel = roiManager("count");
+  roiManager("Reset");
+
+  sel_names = newArray(nsel);
+  total_counts = newArray(nsel);
+  multi_counts = newArray(nsel);
+  area_counts  = newArray(nsel);
+
+  run("Clear Results");
+  run("Set Measurements...", " redirect=None decimal=9");
+  run("Line Width...", "line=3");
+  setForegroundColor(0,0,0);
+  setBackgroundColor(255,255,255);
+  selectImage(id);
+  close();
+  for (i=0; i<nsel;i++) {
+    open(image_path+file);
+    if (nsel==1) {
+      roiManager("Open",image_path+name+'.roi');
+    } else {
+      roiManager("Open",image_path+name+'.zip');
+    }
+    // Reset scale to raw pixels
+    run("Set Scale...", "distance=0 known=1 pixel=1 unit=pixel");
+
+    roiManager("Select",i);
+    sel_name = name+'_'+selectionName;
+    sel_names[i] = selectionName;
+    path_to_count_selections = data_path+sel_name+'_count_selections.zip';
+    path_to_measurements = data_path+sel_name+'_measurements.txt';
+    path_to_counts = data_path+name+sel_name+'_counts.txt';
+    path_to_outlines = outline_path+name+'_outlines.png';
+    run("Crop");
+    roiManager("Reset");
+    roiManager("Add");
+    roiManager("Select",0);
+    roiManager("Rename",sel_name);
+    run("Select None");
+    cid = getImageID();
+    rename(sel_name);
+    run("Duplicate...", "title=orig");
+    orig = getImageID();
+    run("Duplicate...", "title="+COMP_NAME);
+    dup = getImageID();
+    run("Enhance Contrast", "saturated=0.1 normalize");
+    roiManager("Select",0);
+    roiManager("Draw");
+    run("8-bit");
+    //run("RGB Color");
+
+    getDimensions(width,height,channels,slices,frames);
+
+    selectImage(cid);
+    run("Gaussian Blur...", "sigma=1.00");
+    roiManager("Select",0);
+    run("Clear Outside");
+    run("Select None");
+    setAutoThreshold("MaxEntropy apply");
+    run("Convert to Mask");
+    run("Options...", "iterations=3 count=4 edm=Overwrite do=Erode");
+    run("Watershed");
+    run("Watershed");
+
+    // Run with low threshold to get as many counts as possible.
+    roiManager("Reset");
+    run("Analyze Particles...", "size="+MIN_AREA+"-7000 circularity="+COUNT_THRESH+"-1.00 show=Outlines add");
+    total_counts[i] = roiManager("count");
+    count_drawing = getImageID();
+    rename(COUNT_NAME);
+    prep_drawing(count_drawing);
+    roiManager("save",path_to_count_selections);
+    
+    // Select multiple colonies that might have been counted as singles.
+    roiManager("Reset");
+    selectImage(cid);
+    run("Analyze Particles...", "size="+MIN_AREA+"-7000 circularity="+COUNT_THRESH+"-"+AREA_THRESH+" show=Outlines add");
+    multi_counts[i] = roiManager("count");
+    mult_drawing = getImageID();
+    rename(MULTI_NAME);
+    prep_drawing(mult_drawing);
+
+    // Run again with a more strict circularity 
+    // requirement to improve area estimates.
+    // (This will bias against larger colonies).
+    roiManager("Reset");
+    selectImage(cid);
+    run("Analyze Particles...", "size="+MIN_AREA+"-7000 circularity="+AREA_THRESH+"-1.00 show=Outlines display exclude add");
+    area_counts[i] = roiManager("count");
+    area_drawing = getImageID();
+    rename(AREA_NAME);
+    prep_drawing(area_drawing);
+    
+    run("RGB Gray Merge", "keep blend? subtract=0.5 red="+AREA_NAME+" green="+MULTI_NAME+" blue="+COUNT_NAME+" gray="+COMP_NAME);
+    run("Enhance Contrast", "saturated=0.5");
+    saveAs("PNG", path_to_outlines);
+    roiManager("Reset");
+
+    f = File.open(path_to_measurements);
+    print(f, "label\tarea\tmedian\tmean\tsd\tmin\tmax\tcirc\tround");
+    selectImage(orig);
+    roiManager("open", path_to_count_selections);
+    csels = roiManager("count");
+    for (i=0; i<csels; i++) {
+      List.setMeasurements;
+      print(f,sel_name+"\t"+
+              List.getValue("Area")  +"\t"+
+              List.getValue("Median")+"\t"+
+              List.getValue("Mean")  +"\t"+
+              List.getValue("StdDev")+"\t"+
+              List.getValue("Min")   +"\t"+
+              List.getValue("Max")   +"\t"+
+              List.getValue("Circ.") +"\t"+
+              List.getValue("Round"));
+    }
+    File.close(f);
+    closer(7);
+  }
+
+
+  //setBatchMode(false);
+
+  f = File.open(data_path+'counts.txt');
+  print(f,"\tarea\tmulti\ttotal");
+  for (i=0;i<nsel;i++) {
+    print(f, sel_names[i]+"\t"+area_counts[i]+"\t"+multi_counts[i]+"\t"+total_counts[i]);
+  }
+  File.close(f);
+}
+
+function closer(n) {
+  for (i=0;i<n;i++) {
+    close();
+  }
+}
+
+function prep_drawing(id) {
+  selectImage(id);
+  run("8-bit");
+  run("Invert");
+}
+
+function list_windows() {
+  list = getList("window.titles");
+    if (list.length==0)
+     print("No non-image windows are open");
+    else {
+     print("Non-image windows:");
+       for (i=0; i<list.length; i++)
+         print("   "+list[i]);
+    }
+}
+
+function mkdir(dir) {
+  if (File.exists(dir) ==0)
+    File.makeDirectory(dir);
+}

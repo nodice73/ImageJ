@@ -1,0 +1,2 @@
+position	rejected	untagged	BF	Venus	DsRed	
+A01n	27	0	850	489	486	

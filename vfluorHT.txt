@@ -1,0 +1,360 @@
+// vim: set filetype=javascript tabstop=2 shiftwidth=2 expandtab :
+macro "vfluor" {
+  // Attempts to count objects based on their fluorescence.  Objects are
+  // identified as local maxima, followed by a watershed.  Since boundaries
+  // are defined where two local maxima meet, the size of the area around 
+  // each object will be inversely correlated with the local density.
+  //
+  // 'project_dir' is a folder containing images.
+  path = getArgument;
+  setBatchMode(true);
+  main(path);
+}
+  
+function main(PROJECT_PATH) {
+  FS = File.separator();
+  if (FS == "\\") FS = "\\\\";
+ 
+  run("Options...", "iterations=1 black edm=Overwrite count=1");
+
+  AUTO = true;
+  if (PROJECT_PATH == "") {
+    PROJECT_PATH = getDirectory("Choose a Directory");
+    AUTO = false;
+  }
+  PROJECT_NAME = File.getName(PROJECT_PATH);
+
+  POSITION_STRING = "[A-Z][0-9]+[a-z]?";
+  POSITION_DIRS = getMatchingDirs(PROJECT_PATH,POSITION_STRING);
+
+  RESULTS_PATH = PROJECT_PATH+"vfluor_results"+FS;
+  POSITION_RESULTS_PATH = RESULTS_PATH+"position_data"+FS;
+  File.makeDirectory(RESULTS_PATH);
+  File.makeDirectory(POSITION_RESULTS_PATH);
+
+  WIDTH = HEIGHT = CHANNELS = SLICES = FRAMES = 0;
+  SD_ABOVE_BG = 0; // Number of standard deviations above mean background
+                   // to count as signal.
+
+  position_names = newArray(POSITION_DIRS.length);
+  wl_names = newArray(20);
+  for (i=0;i<wl_names.length;i++) wl_names[i] = "";
+
+  COUNT_ARRAY = newArray(POSITION_DIRS.length*wl_names.length+1);
+  count = 0;
+  wls = 0;
+
+  path_to_counts = RESULTS_PATH+PROJECT_NAME+"_"+SD_ABOVE_BG+"sd_counts.txt";
+
+  path_to_stack_lists = PROJECT_PATH+PROJECT_NAME+"_stacks"+FS;
+  File.makeDirectory(path_to_stack_lists);
+  drawing_paths = newArray(POSITION_DIRS.length);
+
+  path_to_drawing_list = path_to_stack_lists+"drawn_selections.txt";
+
+  for (pos=0; pos<POSITION_DIRS.length; pos++) {
+    position_name = replace(POSITION_DIRS[pos],"/","");
+
+    well     = substring(position_name,0,lengthOf(position_name)-1);
+    position = substring(position_name,lengthOf(position_name)-1);
+
+    print("Processing "+position_name+"...");
+    position_names[pos] = position_name;
+    position_path       = PROJECT_PATH+POSITION_DIRS[pos];
+    position_data_path  = POSITION_RESULTS_PATH+position_name+"_data"+FS;
+
+    wl_string = "WL[1-9]+";
+    wl_dirs = getMatchingDirs(position_path,wl_string);
+
+    for (wl=0;wl<wl_dirs.length;wl++) {
+      wl_name = replace(wl_dirs[wl],"/","");
+
+      print("  "+wl_name+"...");
+
+      if (pos == 0) {
+        wl_names[wl] = wl_name;
+        wls++;
+      }
+
+      wl_path = position_path+wl_dirs[wl];
+      File.makeDirectory(position_data_path);
+
+      image = getImage(wl_path);
+      path_to_image = wl_path+image;
+      image_name = replace(image,'.tif',"");
+
+      open(path_to_image);
+      getDimensions(WIDTH,HEIGHT,CHANNELS,SLICES,FRAMES);
+      original_image_id = getImageID();
+
+      run("Set Measurements...", "redirect=None decimal=3");
+      run("Set Scale...", "distance=0 known=0 pixel=1 unit=pixel global");
+
+      // Paths to images
+      path_to_bg_mask   = position_data_path+position_name+"_bg_mask.png";
+      path_to_drawing   = position_data_path+position_name+"_selection_image.png";
+      path_to_cor_fluor = position_data_path+position_name+"_"+wl_name+"_corrected.tif";
+      path_to_voroni    = position_data_path+position_name+"_"+wl_name+"_voroni.png";
+
+      // Paths to selections
+      path_to_bg_selection
+        = position_data_path+position_name+"_"+wl_name+"_bg_selection.zip";
+      path_to_selections = position_data_path+position_name+"_"+wl_name+"_selections.zip";
+
+      // Path to data files
+      path_to_data = 
+        position_data_path+position_name+"_"+wl_name+"_"+SD_ABOVE_BG+"sd_data.txt";
+      File.makeDirectory(position_data_path);
+
+      roiManager("Reset");
+      rad = 0.2;
+      run("Subtract Background...", "rolling="+rad+" sliding");
+
+      run("Duplicate...", "title=manip");
+      manip = getImageID();
+
+      run("8-bit");
+      makeBgMask(original_image_id,path_to_bg_selection);
+      
+      manip_bg = getBg(manip,path_to_bg_selection);
+      orig_bg  = getBg(original_image_id,path_to_bg_selection);
+
+      // Clean up 8-bit version of image for segmentation.
+      selectImage(manip);
+      setMinAndMax((manip_bg[0]+SD_ABOVE_BG*manip_bg[1]),255);
+      run("Apply LUT");
+
+      // Despeckle removes more relevant noise than Remove Outliers.
+      run("Despeckle");
+      save(path_to_cor_fluor);
+
+      // Segmented particles outputs a voroni diagram as of 1.43.
+      run("Find Maxima...", "noise=1 output=[Segmented Particles]");
+      run("Invert");
+
+      //run("Remove Outliers...", "radius=1 threshold=1 which=Dark");
+      rename(image_name+"_voroni");
+      save(path_to_voroni);
+      cell_mask = getImageID();
+
+
+      roiManager("Reset");
+      run("Analyze Particles...", 
+          "size=0-Infinity circularity=0-1 show=Nothing clear add");
+      nObjects = roiManager("count");
+      roiManager("Save", path_to_selections);
+      selectImage(cell_mask);
+      close();
+
+      selectImage(manip);
+      close();
+
+      // Get value for even background and subtract from entire image.
+      selectImage(original_image_id);
+      newImage("bg","16-bit white",WIDTH,HEIGHT,CHANNELS);
+      bg = getImageID();
+      run("Set...", "value="+(orig_bg[0]+SD_ABOVE_BG*orig_bg[1]));
+      imageCalculator("Subtract create",original_image_id,bg);
+      rename(image_name+"_bs");
+      clean = getImageID();
+      selectImage(bg);
+      close();
+      
+      selectImage(original_image_id);
+      close();
+
+      // Step through each selection on the 16-bit,
+      // background-subtracted image.
+      selectImage(clean);
+      f = File.open(path_to_data);
+
+      print(f,"Selection\tIntDen\tfile");
+      for (i=0;i<nObjects;i++) {
+        sel = i+1;
+        roiManager("select",i);
+        List.setMeasurements;
+        intden = List.getValue("IntDen");
+        print(f, sel+"\t"+intden+"\t"+image_name+"\n");
+      }
+
+      // Make image with selections drawn on top.
+      drawSelections(clean,path_to_selections,path_to_drawing);
+      drawing_paths[pos] = path_to_drawing;
+
+      selectImage(clean);
+      close();
+
+      COUNT_ARRAY[count++] = nObjects;
+      File.close(f);
+      print("Done!");
+    } 
+  }
+
+  // Write lists of paths to images for easy stack opening.
+  f = File.open(path_to_drawing_list);
+  for (i=0;i<drawing_paths.length;i++) {
+    print(f, drawing_paths[i]);
+  }
+
+  File.close(f);
+
+  // Write the counts report
+  wl_name_string = "position\t";
+  for (i=0;i<wls;i++) {
+    wl_name_string = wl_name_string + wl_names[i] + "\t";
+  } 
+
+  f = File.open(path_to_counts);
+  print(f, wl_name_string);
+
+  for (i=0;i<position_names.length;i++) {
+    count_string = position_names[i]+"\t";
+    for (j=0;j<wls;j++) {
+      wl_counts = COUNT_ARRAY[(wls*i)+j];
+      count_string = count_string+wl_counts+"\t";
+    }
+    print(f, count_string);
+  }
+  File.close(f);
+  roiManager("reset");
+  print("Finished!");
+}
+
+function drawSelections(id,selection_path,savepath) {
+  selectImage(id);
+  run("Duplicate...", "title=drawing");
+
+  roiManager("Open", selection_path);
+  setForegroundColor(255,255,255);
+  roiManager("Draw");
+  roiManager("Reset");
+  save(savepath);
+  close();
+}
+
+function getBg(id,mask) {
+  roiManager("reset");
+  selectImage(id);
+  
+
+  roiManager("open",mask);
+  roiManager("select",0);
+  List.setMeasurements;
+  mean = List.getValue("Mean");
+  sd   = List.getValue("StdDev");
+
+  roiManager("reset");
+  run("Select None");
+  bg = newArray(mean,sd);
+  return bg;
+}
+
+function makeBgMask(id,path_to_bg_sel) {
+  selectImage(id);
+  run("Duplicate...", "title=me.tif");
+  me_id = getImageID();
+
+  methods = newArray("MaxEntropy dark","RenyiEntropy dark","Triangle dark");
+  run("8-bit");
+  run("Gaussian Blur...", "sigma=1");
+  run("Variance...", "radius=3");
+  test_id = getImageID();
+
+  max_area = 0;
+  for (i=0;i<methods.length;i++) {
+    selectImage(test_id);
+    run("Duplicate...", "title="+methods[i]);
+    threshPlus(methods[i]);
+    List.setMeasurements;
+    area = List.getValue("Area");
+    //print(methods[i]+":\t"+area);
+    if (area > max_area) max_area = i;
+    close();
+  }
+  selectImage(test_id);
+
+  threshPlus(methods[max_area]);
+
+  roiManager("Add");
+  close();
+  selectImage(id);
+  roiManager("Select",0);
+
+  List.setMeasurements;
+  sd = List.getValue("StdDev");
+  run("Make Inverse");
+  List.setMeasurements;
+  isd = List.getValue("StdDev");
+
+  if (sd > isd) {
+    run("Make Inverse");
+  } else if (sd == isd) { 
+    exit("SD of mask and its inverse are identical!");
+  }
+
+  roiManager("Rename", "bg_mask");
+  roiManager("Save",path_to_bg_sel);
+  run("Select None");
+}
+
+function threshPlus(method) {
+  setAutoThreshold(method);
+  run("Convert to Mask");
+  run("Fill Holes");
+  run("Create Selection");
+}
+
+
+function make_voronoi(id) {
+  run("Voronoi");
+  setMinAndMax(1,1);
+  run("Apply LUT");
+  rename("voroni_mask");
+  run("Invert");
+}
+
+function printa(arr) {
+  for (i=0;i<arr.length;i++) {
+    print(arr[i]);
+  }
+}
+
+function getMatchingDirs(path,match) {
+  contents = getFileList(path);
+  n = 0;
+  names = newArray(contents.length);
+  for (i=0;i<contents.length;i++) {
+    if ( matches(replace(contents[i],"/",""), match) ) {
+      //print("Matched "+contents[i]);
+      names[i] = contents[i];
+      n++;
+    }
+  }
+
+  if (n == 0) exit("Didn't find any matches to "+match+" in "+path);
+
+  good_dirs = newArray(n);
+  gdi = 0;
+  for (i=0;i<names.length;i++) {
+    if ( matches(replace(names[i],"/",""), match) ) {
+      //print("Copying "+ names[i]);
+      good_dirs[gdi++] = names[i];
+    }
+  }
+  return good_dirs;
+}
+
+function getImage(path) {
+  contents = getFileList(path);
+  tifs = 0;
+  tif_name = "";
+  for (i=0;i<contents.length;i++) {
+    if ( matches(contents[i], '.*\.tif') ) {
+      tif_name = contents[i];
+      tifs++;
+    }
+  }
+  if (tifs > 1) exit("Too many images in folder '"+path+"'.");
+  if (tifs == 0) exit("No tifs in folder '"+path+"'.");
+  return tif_name;
+}

@@ -1,0 +1,2 @@
+position	rejected	WL0	WL1	WL2	untagged	ind_WL1	ind_WL2	
+A01n	27	850	482	372	-4	1	1	

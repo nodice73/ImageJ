@@ -1,0 +1,32 @@
+macro "flatten" {
+  flatten();
+}
+function flatten() {
+  id = getImageID();
+  title = getTitle();
+  image_name = replace(title,'.tif',"");
+
+  rad=50;
+  Dialog.create("Pick Radius");
+  Dialog.addNumber("Rolling ball radius: ",rad);
+  Dialog.show();
+  rad = Dialog.getNumber();
+
+  selectImage(id);
+  run("Duplicate...", "title=bg");
+  bg_id = getImageID();
+
+  run("Select None");
+  run("Gaussian Blur...", "sigma=10");
+  run("Subtract Background...", "rolling="+rad+" light parabaloid create");
+
+  imageCalculator("Subtract create 32-bit", id, bg_id);
+  rename(image_name+"_flat.tif");
+  f_id = getImageID();
+
+  selectImage(bg_id);
+  close();
+  selectImage(id);
+  close();
+}
+

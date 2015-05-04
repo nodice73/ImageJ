@@ -1,0 +1,114 @@
+// vim: set filetype=javascript :
+
+macro "cellFinder" {
+    setBatchMode(true);
+    cellFinder();
+    run("Select None");
+}
+function cellFinder() {
+    // Quick and dirty cell identification for out-of-focus 
+    // brightfield images at 40x magnification in microfluidics device.
+    //
+    // DIRECTIONS:
+    // Run the macro on an open stack of bright field images.  The macro
+    // creates a 'selections' folder, containing the selections for each
+    // slice and a tiff stack of the segmented images called 'segmented.tif'.
+    // To be compatible with the YeastTracker plugin, 'X' and 'Y' columns
+    // are printed first, followed by other measurements.  The results are
+    // written to 'results.txt'.
+
+    //run("Set Measurements...", "area mean standard modal min centroid center median perimeter bounding fit shape feret's integrated median skewness kertosis area_fraction stack shape redirect=None decimal=5");
+    run("Set Measurements...", " redirect=None decimal=5");
+    
+    FS = File.separator();
+
+    orig_id = getImageID();
+
+    path = getDirectory("image");
+    results = path+"results.txt";
+    segmented = path+"segmented.tif";
+    selection_path = path+"selections"+FS;
+    File.makeDirectory(selection_path);
+
+    // This sets the threshold for "Find Maxima..." and is probably the
+    // most important number in determining how well this works.
+    thresh=50;
+
+    run("Select None");
+    proc_id = preprocess_bf(orig_id);
+    segmentStack(proc_id);
+    selectImage(proc_id);
+    close();
+
+    selectImage(orig_id);
+
+    f = File.open(results);
+    print(f, "X\tY\tArea\tMajor\tMinor\tRound\tSlice");
+
+    for (slice=1;slice<=nSlices();slice++) {
+        roiManager("reset");
+        roiManager("open",selection_path+slice+".zip");
+        n = roiManager("Count");
+        for (sel=0;sel<n;sel++) {
+            roiManager("select",sel);
+            List.setMeasurements;
+            if (List.getValue("StdDev")>1000) {
+                print(f, List.getValue("X")+"\t"+List.getValue("Y")+"\t"+List.getValue("Area")+"\t"+List.getValue("Major")+"\t"+List.getValue("Minor")+"\t"+List.getValue("Round")+"\t"+slice);
+            }
+        }
+    }
+    roiManager("reset");
+    run("Select None");
+    File.close(f);
+}
+
+function preprocess_bf(id) {
+    selectImage(id);
+    run("Duplicate...","title=processed duplicate");
+    pp_id = getImageID();
+    run("Gaussian Blur...", "sigma=2 stack");
+    return pp_id;
+}
+
+function segmentStack(id) {
+    getDimensions(WIDTH,HEIGHT,CHANNELS,SLICES,FRAMES);
+    newImage("segmented","8-bit",WIDTH,HEIGHT,SLICES);
+    seg_stack_id = getImageID();
+
+    for (i=1;i<=nSlices();i++) {
+        showProgress(i/nSlices());
+        selectImage(id);
+        setSlice(i);
+        run("Find Maxima...","noise="+thresh+" output=[Segmented Particles]");
+        seg_id = getImageID();
+        List.setMeasurements();
+        if (List.getValue("Mode")==255) {
+            run("Invert");
+        }
+        wait(500);
+        analyzeParticles(seg_id,i);
+        addToStack(seg_id,seg_stack_id);
+    }
+    run("Select None");
+    selectImage(seg_stack_id);
+    save(segmented);
+}
+
+function analyzeParticles(id,frame) {
+    run("Analyze Particles...", "size=0-500 circularity=.5-1.00 show=Nothing exclude include clear add");
+    roiManager("Deselect");
+    roiManager("Save", selection_path+frame+".zip");
+}
+
+function addToStack(id, stack_id) {
+    selectImage(id);
+    run("Select All");
+    run("Copy");
+    run("Select None");
+    selectImage(stack_id);
+    setSlice(i);
+    run("Paste");
+    run("Select None");
+    selectImage(id);
+    close();
+}

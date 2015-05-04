@@ -1,0 +1,169 @@
+
+macro "count96v" {
+  //setBatchMode(true);
+  main();
+  //setBatchMode(false);
+}
+
+function main() {
+  image_dir = getDirectory("image");
+  full_name = getTitle();
+  image_name = split(full_name,'.');
+  image_name = image_name[0];
+
+  FS = File.separator();
+  getDimensions(width,height,channels,slices,frames);
+
+  size = "1-200";
+  circ = "0.50-1.0";
+  radius = 50;
+  tol = 12;
+
+  File.makeDirectory(image_dir+FS+"data");
+  data_dir = image_dir+"data";
+
+  Dialog.create("Set Parameters");
+  Dialog.addString("Size (pixels^2):", size, 10);
+  Dialog.addString("Circularity:", circ, 10);
+  Dialog.addNumber("Rolling ball radius:", radius);
+  Dialog.addNumber("Find Maxima Tolerance:", tol);
+  Dialog.show();
+  size = Dialog.getString();
+  circ = Dialog.getString();
+  radius = Dialog.getNumber();
+  tol = Dialog.getNumber();
+
+
+  roiManager("Reset");
+  id = getImageID();
+  flat_id = flatten(id,radius);
+  selectImage(flat_id);
+  run("Enhance Contrast", "saturated=0.5 normalize");
+  saveAs("tif", data_dir+FS+image_name+"_flat.tif");
+  run("Duplicate...", "title=bg_mask.tif");
+
+  mask_id = getImageID();
+  get_background(mask_id);
+  saveAs("png",data_dir+FS+image_name+"_mask.png");
+  close();
+
+
+  setForegroundColor(255,255,255);
+  selectImage(flat_id);
+  remove_bg(flat_id);
+
+  roiManager("reset");
+  run("8-bit");
+  run("Gaussian Blur...", "sigma=0.5");
+  run("Find Maxima...", "noise="+tol+" output=[Segmented Particles]");
+  run("Analyze Particles...", "size="+size+" circularity="+circ+" show=Nothing clear add");
+  total_counts = roiManager("count");
+  run("Analyze Particles...", "size="+size+" circularity="+circ+" show=Nothing clear exclude add");
+  close();
+
+
+  newImage("segmented","8-bit white",width,height,slices);
+  seg = getImageID();
+  seg_title = getTitle();
+  setForegroundColor(0,0,0);
+  roiManager("Fill");
+  run("Dilate");
+
+  selectImage(flat_id);
+  run("Find Maxima...", "noise="+tol+" output=[Single Points] exclude");
+  vor = getImageID();
+  vor_title = getTitle();
+  run("Voronoi");
+  setMinAndMax(0,1);
+  run("Apply LUT");
+  run("Invert");
+  save(data_dir+FS+image_name+"_voronoi_mask.png");
+
+  imageCalculator("Subtract create", vor_title, seg_title);
+  sel_mask = getImageID();
+  run("Make Binary");
+  save(data_dir+FS+image_name+"_selection_mask.png");
+  selectImage(seg);
+  close();
+  selectImage(vor);
+  close();
+
+  selectImage(sel_mask);
+  run("Analyze Particles...", "size="+size+" circularity="+circ+" show=Nothing clear summarize add");
+  roiManager("Save", data_dir+FS+image_name+"_selections.zip");
+  close();
+
+
+  f = File.open(data_dir+FS+image_name+"_fm"+tol+"_data.txt");
+
+  selectImage(flat_id);
+  nsels = roiManager("count");
+  print(f, "'Find Maxima' Threshold: "+tol);
+  print(f, "Total counts: "+total_counts);
+  print(f, "selection\tarea\tx\ty\tstdev");
+  for (i=0;i<nsels;i++) {
+    sel   = i + 1;
+    roiManager("select",i);
+    roiManager("Measure");
+    area  = getResult("Area");
+    x     = getResult("X");
+    y     = getResult("Y");
+    stdev = getResult("StdDev");
+    print(f, sel+"\t"+area+"\t"+x+"\t"+y+"\t"+stdev);
+  }
+  close();
+}
+
+function remove_bg(id) {
+  selectImage(id);
+  run("8-bit");
+  roiManager("Select", 0);
+  roiManager("Measure");
+  mean_bg = round(getResult("Mean"));
+  run("Fill");
+  run("Select None");
+  setMinAndMax(0,mean_bg);
+  run("Apply LUT");
+  saveAs("tif",data_dir+FS+image_name+"_bg_sub.tif");
+}
+
+function flatten(id,r) {
+  selectImage(id);
+
+  rename("background");
+
+  run("Select None");
+  run("Gaussian Blur...", "sigma=10");
+  run("Subtract Background...", "rolling="+r+" light create sliding");
+  bg_id = getImageID();
+  open(image_dir+FS+full_name);
+  orig_id = getImageID();
+
+  imageCalculator("Subtract create 32-bit", full_name, "background");
+  rename(image_name+"_flat.tif");
+  f_id = getImageID();
+
+  selectImage(bg_id);
+  close();
+  selectImage(orig_id);
+  close();
+  return f_id;
+}
+
+function get_background(id) {
+  selectImage(id);
+
+  run("8-bit");
+  run("Gaussian Blur...", "sigma=1");
+  run("Variance...", "radius=3");
+  setAutoThreshold("RenyiEntropy dark");
+  run("Convert to Mask");
+  run("Fill Holes");
+  run("Create Selection");
+  run("Make Inverse");
+  roiManager("Add");
+  roiManager("Select", 0);
+  roiManager("Rename", "bg_mask");
+  roiManager("Save", data_dir+FS+image_name+"_bg_selection.zip");
+  run("Select None");
+}

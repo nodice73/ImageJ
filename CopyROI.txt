@@ -1,0 +1,28 @@
+// After selecting a region of interest (ROI) in a stack of pictures,
+// run this macro to copy the ROI of each slice to a new 8-bit image file.
+
+dir    = getDirectory("Save ROI to...");
+in_id  = getImageID();
+run("8-bit");
+name   = getTitle();
+name   = split(name,".");
+getSelectionBounds(x,y,width,height);
+roiManager("Save",dir+"\\roi.zip");
+slices = nSlices();
+
+newImage("ROI","8-bit",width,height,slices);
+out_id = getImageID();
+
+setBatchMode(true);
+for (i=0; i<slices; i++) {
+  selectImage(in_id);
+  setSlice(i+1);
+	run("Copy");
+
+  selectImage(out_id);
+  setSlice(i+1);
+	run("Paste");
+}
+save(dir+"\\"+name[0]+"_ROI.tif");
+close();
+setBatchMode(false);

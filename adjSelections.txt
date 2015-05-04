@@ -1,0 +1,57 @@
+macro "adjustSelection" {
+  id = getImageID();
+  adjustSelection(id);
+}
+
+function adjustSelection(img_id) {
+
+  adj = newArray(3);
+  x = 0; y = 0; s = 0;
+  selectImage(img_id);
+  setOption("Show All",true);
+  run("Select None");
+  bad = getBoolean("Adjust selections?");
+  while (bad == 1) {
+    temp = moveSelections(x,y,s,0);
+    bad = getBoolean("Adjust selections?");
+    adj[0] += temp[0]; adj[1] += temp[1]; adj[2] += temp[2];
+  }
+  return adj;
+}
+
+function moveSelections(dx, dy, ds, auto) {
+  requires("1.38e");
+
+  if (auto == 0) {
+    Dialog.create("Move Selections");
+    Dialog.addNumber("X Displacement:", 0);
+    Dialog.addNumber("Y Displacement:", 0);
+    Dialog.addNumber("Shrink by", 0);
+    Dialog.show();
+    dx = Dialog.getNumber();
+    dy = Dialog.getNumber();
+    ds = -Dialog.getNumber();
+  }
+
+  n = roiManager("count");
+
+  if (n==0)
+    return 0;
+  
+  // "Enlarge" function only works for first slice presented
+  // to it.  Be sure to open new image (as opposed to just
+  // selecting a new slice) each time adjustments need to be made.
+  for (i=0; i<n; i++) {
+    roiManager('select', i);
+    getSelectionBounds(x, y, w, h);
+    setSelectionLocation(x+dx, y+dy);
+    run("Enlarge...", "enlarge="+ds);
+    roiManager('update');
+  }
+
+  if (auto == 0) {
+    r = newArray(dx,dy,ds);
+    return r;
+  }
+  else { return n; }
+}

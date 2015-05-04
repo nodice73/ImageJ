@@ -1,0 +1,193 @@
+// vim: set filetype=javascript:
+macro "mtAnalyze" {
+  //setBatchMode(true);
+  mtAnalyze();
+}
+
+function mtAnalyze() {
+  roiManager("reset");
+  run("Select None");
+  MIN_DIST = 10;
+  orig = getImageID();
+  slices = nSlices();
+
+  project_dir = File.getParent(getDirectory("image"));
+  print(project_dir);
+  f = File.open(project_dir+"/mtbf_results.txt");
+  print(f,"position\tslice\tcells\tarea\tsd");
+
+  setSlice(1);
+  flat = flatten();
+  findMax(flat);
+  temp_x = newArray(nResults);
+  temp_y = newArray(nResults);
+  for (i=0; i<nResults; i++) {
+    temp_x[i] = getResult('X', i);
+    temp_y[i] = getResult('Y', i);
+    //print("temp x start "+i+": "+temp_x[i]+"\n temp y start "+i+": "+temp_y[i]);
+  }
+
+  remove = newArray(nResults);
+  newSize = nResults;
+  for (i=0;i<nResults;i++) {
+    for (j=i+1;j<nResults;j++) {
+      //print(i+","+j+": "+distance(temp_x[i],temp_x[j],temp_y[i],temp_y[j]));
+      if (distance(temp_x[i],temp_x[j],temp_y[i],temp_y[j]) < MIN_DIST) {
+        if (remove[j]+remove[i] == 0) {
+          remove[j]=1;
+          newSize--;
+        }
+      }
+    }
+  }
+  //print("After distance filter:");
+  //printArray(remove);
+  //print("newSize:" + newSize);
+  if (newSize != 0) {
+    mask = makeMask(flat);
+
+    makeSelections(mask,temp_x,temp_y);
+    selectImage(flat);
+    nStarts = roiManager("count");
+    for (sel=0;sel<nStarts;sel++) {
+      roiManager("Select",sel);
+      List.setMeasurements;
+      area = List.getValue("Area");
+      sd = List.getValue("StdDev");
+      //run("Measure");
+      
+      // These numbers depend on the thresholding
+      // algorithm used.
+      if (area > 400 || area < 200 || sd > 700) {
+        if (remove[sel] == 0) {
+          remove[sel] = 1;
+          newSize--;
+        }
+      }
+    }
+    //print("After morphology filter:");
+    //printArray(remove);
+    //print("newSize:" + newSize);
+    roiManager("reset");
+    run("Select None");
+    selectImage(flat);
+    close();
+    if (newSize > 0) {
+      x_starts = newArray(newSize);
+      y_starts = newArray(newSize);
+      idx = 0;
+      for (i=0;i<temp_x.length;i++) {
+        if (!remove[i]) {
+          x_starts[idx]   = temp_x[i];
+          y_starts[idx++] = temp_y[i];
+        }
+      }
+
+      if (newSize > 0) {
+        for (slice=1; slice<nSlices; slice++) {
+          setSlice(slice);
+          mask = makeMask(orig);
+          makeSelections(mask,x_starts,y_starts);
+          measureSelections(orig);
+          roiManager("reset");
+          run("Select None");
+        }
+      } else {
+        print(f,getTitle()+"\t"+0+"\t"+0+"\t"+"NA"+"\t"+"NA");
+      }
+    } else {
+      print(f,getTitle()+"\t"+0+"\t"+0+"\t"+"NA"+"\t"+"NA");
+    }
+  } else {
+    print(f,getTitle()+"\t"+0+"\t"+0+"\t"+"NA"+"\t"+"NA");
+  }
+  File.close(f);
+}
+
+
+function findMax(id) {
+  selectImage(id);
+  run("Duplicate...", "title=first");
+  fm = getImageID();
+  run("Gaussian Blur...", "sigma=1");
+  run("Find Maxima...", "noise=500 output=[List]");
+  close();
+  selectImage(fm);
+  close();
+}
+
+function makeMask(id) {
+  run("Select None");
+  selectImage(id);
+  run("Duplicate...", "title=mask");
+  mask = getImageID();
+  run("16-bit");
+  run("Gaussian Blur...", "sigma=1");
+  run("8-bit");
+  run("Variance...", "radius=2");
+  setAutoThreshold("MaxEntropy dark");
+  run("Convert to Mask","");
+  run("Fill Holes");
+  return mask;
+}
+
+function makeSelections(id,x,y) {
+  run("Select None");
+  roiManager("reset");
+  selectImage(id);
+  for (start=0; start<x.length; start++) {
+    doWand(x[start],y[start]);
+    roiManager("Add");
+  }
+  close();
+}
+
+function measureSelections(id) {
+  selectImage(id);
+  title = getTitle();
+  nStarts = roiManager("count");
+  for (sel=0;sel<nStarts;sel++) {
+    roiManager("Select",sel);
+    List.setMeasurements;
+    area = List.getValue("Area");
+    sd = List.getValue("StdDev");
+    print(f,title+"\t"+slice+"\t"+(sel+1)+"\t"+area+"\t"+sd);
+  }
+}
+
+
+function distance(x1,x2,y1,y2) {
+  return sqrt( pow(x1-x2,2) + pow(y1-y2,2) );
+}
+
+function flatten() {
+  run("Duplicate...", "title=flat");
+  id = getImageID();
+  title = getTitle();
+  image_name = replace(title,'.tif',"");
+
+  rad=50;
+  selectImage(id);
+  run("Duplicate...", "title=bg");
+  bg_id = getImageID();
+
+  run("Select None");
+  run("Gaussian Blur...", "sigma=10");
+  run("Subtract Background...", "rolling="+rad+" light parabaloid create");
+
+  imageCalculator("Subtract create 32-bit", id, bg_id);
+  rename(image_name+"_flat.tif");
+  f_id = getImageID();
+
+  selectImage(bg_id);
+  close();
+  selectImage(id);
+  close();
+  return f_id;
+}
+
+function printArray(a) {
+  for (i=0;i<a.length;i++) {
+    print(a[i]);
+  }
+}

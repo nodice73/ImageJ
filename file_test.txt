@@ -1,0 +1,2 @@
+print(File.directory());
+print(File.name());

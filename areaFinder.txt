@@ -1,0 +1,15 @@
+ti=getTitle();
+run("Duplicate...", "title=" + ti + " duplicate");
+run("Gaussian Blur...", "sigma=1 stack");
+run("Variance...", "radius=2 stack");
+setAutoThreshold("MaxEntropy dark");
+run("Convert to Mask", "  black");
+
+run("Select None");
+n = nSlices();
+for (i=1; i<=n; i++) {
+setSlice(i);
+run("Create Selection");
+roiManager("Add");
+run("Measure");
+}

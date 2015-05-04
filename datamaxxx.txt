@@ -1,0 +1,646 @@
+// A method for using brightfield images to select each cell in a field.
+// Area of very small cell is 100 pixels^2
+// Circularity if very oddly shaped cells is usually > 0.4
+
+macro "datamaxxx" {  
+  ID = getImageID();
+  SHOW_PATHS = false;
+
+  fld_dlm = File.separator();
+
+  bf_dir      = getDirectory("image");
+  working_dir = File.getParent(bf_dir);
+  res_dir     = working_dir+fld_dlm+"results";
+  sel_dir     = working_dir+fld_dlm+"selections";
+  seg_dir     = working_dir+fld_dlm+"segmented";
+  count_dir   = working_dir+fld_dlm+"counts";
+  stack_dir   = working_dir+fld_dlm+"stacks";
+  yfp_dir     = working_dir+fld_dlm+"yfp";
+
+  bf_stack_name  = "bf.tif";
+  bf_alt_name    = "bf_alt.tif";
+  yfp_stack_name = "yfp.tif";
+  yfp_alt_name   = "yfp_alt.tif";
+  seg_stack_name = "segmented.tif";
+  res_name       = "results.txt";
+
+  path_to_bf        = bf_dir+fld_dlm+bf_stack_name;
+  path_to_bf_alt    = stack_dir+fld_dlm+bf_alt_name;
+  path_to_yfp       = yfp_dir+fld_dlm+yfp_stack_name;
+  path_to_yfp_alt   = stack_dir+fld_dlm+yfp_alt_name;
+  path_to_seg_stack = stack_dir+fld_dlm+seg_stack_name;
+
+  if (SHOW_PATHS == true) {
+    Dialog.create("Path Info");
+    Dialog.addString(""+path_to_bf,'');
+    Dialog.addString(""+path_to_bf_alt,'');
+    Dialog.addString(""+path_to_yfp,'');
+    Dialog.addString(""+path_to_yfp_alt,'');
+    Dialog.addString(""+path_to_seg_stack,'');
+    Dialog.addString(""+working_dir,'');
+    Dialog.show();
+  }
+
+  blank_cell = 'NA';
+  bf_slices = nSlices();
+  close();
+
+  if (File.exists(sel_dir)) {
+    if (getBoolean("Directory structure exists. OK to overwrite?" )) {
+      sel_files   = getFileList(sel_dir);
+      seg_files   = getFileList(seg_dir);
+      res_files   = getFileList(res_dir);
+      stack_files = getFileList(stack_dir);
+      count_files = getFileList(count_dir);
+
+      delete_dir(sel_dir,sel_files);
+      delete_dir(seg_dir,seg_files);
+      delete_dir(res_dir,res_files);
+      delete_dir(count_dir,count_files);
+      delete_dir(stack_dir,stack_files);
+    }
+    else { exit(); }
+  }
+
+  mkdir(res_dir);
+  mkdir(sel_dir);
+  mkdir(seg_dir);
+  mkdir(count_dir);
+  mkdir(stack_dir);
+
+  setForegroundColor(0,0,0);
+  
+  Dialog.create("Slice Info");
+  Dialog.addString("Frames to skip (comma-separated): ",'');
+  Dialog.addNumber("Time Interval",0.25);
+  Dialog.show();
+  skip_string = Dialog.getString();
+  interval = Dialog.getNumber();
+  skip_array = split(skip_string,',');
+  report_skip = skip_string;
+  if (skip_string == '')
+    report_skip = 'none';
+
+  for (i=0;i<skip_array.length;i++) {
+    while (parseInt(skip_array[i]) > bf_slices) {
+      Dialog.create("Entered slice is bigger than stack size");
+      Dialog.addNumber("New slice: ", skip_array[i]);
+      Dialog.show();
+      skip_array[i] = Dialog.getNumber();
+    }
+  }
+
+
+  Dialog.create("Find Maxima");
+  Dialog.addNumber("Noise Tolerance:", 25);
+  Dialog.show();
+  tolerance = Dialog.getNumber();
+
+  Dialog.create("Analyze Particles");
+  Dialog.addString("Size (pixels^2):", "70-350",10);
+  Dialog.addString("Circularity:", "0.5-1",10);
+  Dialog.show();
+  size = Dialog.getString();
+  circ = Dialog.getString();
+
+  Dialog.create("Set Post-Adjustment Thresholds");
+  Dialog.addNumber("S/N: ", 2.0);
+  Dialog.addNumber("Circ: ", 0.65);
+  Dialog.addNumber("Area: ", 1);
+  Dialog.show();
+  SN = Dialog.getNumber();
+  circ_thresh = Dialog.getNumber();
+  area_thresh = Dialog.getNumber();
+
+  Dialog.create("Background Subtraction");
+  Dialog.addNumber("Radius (zero for no subtraction): ", 50);
+  Dialog.show();
+  back_sub = Dialog.getNumber();
+
+  bg_region = get_bg_region(path_to_bf);
+
+  process_bf(path_to_bf);
+  find_stack_maxima(tolerance, path_to_bf_alt, path_to_seg_stack);
+
+  // Save stack of segmented images as individual files.
+  stackSplit(bf_slices, skip_array, path_to_seg_stack, seg_dir);
+
+  // Run "Analyze Particles..." on each mask.
+  seg_files = getFileList(seg_dir);
+  sort(seg_files);
+  if (seg_files.length == 0)
+    exit("No segmented files were created!");
+
+
+  fh = File.open(res_dir+fld_dlm+res_name);
+  getDateAndTime(year,month,dayOfWeek,dayOfMonth,hour,minute,second,msec);
+
+
+  analyzeParticles(skip_array, size, circ, interval, res_dir, fh);
+
+  // Open fluorescent images.
+  open(path_to_yfp);
+  yfp_id = getImageID();
+  yfp_slices = nSlices();
+  yfp_alt_slices = yfp_slices;
+
+  yfp_alt_slices = remove_slices(skip_array, yfp_id);
+
+
+  selections = getFileList(sel_dir);
+  sort(selections);
+
+  if (yfp_alt_slices != selections.length)
+    exit("Number of YFP images ("+yfp_alt_slices+") and selections ("+selections.length+") are not equal!");
+
+  middle = floor((yfp_alt_slices - skip_array.length) / 2);
+  if (middle <= 0)
+    middle = 1;
+
+  // Set to middle image, to get a better idea of how the selections
+  // should be adjusted.
+  sel_path = sel_dir+fld_dlm+selections[middle-1];
+  selectImage(yfp_id);
+  setSlice(middle);
+
+
+  // Adjust selections, if necessary
+  adjusted = adjustSelection(sel_path,yfp_id);
+  selectImage(yfp_id);
+  close();
+
+
+  run("Set Measurements...", "area mean modal min centroid circularity median redirect=None decimal=3");
+  // Apply these changes to the each image, and gather statistics.
+  print(fh, "Slice\tn\tTime\tX\tY\tCirc.\tBackground\tArea\tMean\tConc\tMode\tMedian\tFiltered");
+
+  time = -interval;
+  times = newArray(yfp_slices);
+
+  slice_fluor_means = newArray(yfp_slices);
+  slice_conc_means  = newArray(yfp_slices);
+  slice_area_means = newArray(yfp_slices);
+
+  slice_fluor_sds   = newArray(yfp_slices);
+  slice_conc_sds   = newArray(yfp_slices);
+  slice_area_sds   = newArray(yfp_slices);
+
+  slice_fluor_cvs   = newArray(yfp_slices);
+  slice_conc_cvs   = newArray(yfp_slices);
+  slice_area_cvs   = newArray(yfp_slices);
+
+  nfiltered = 0;
+  total = 0;
+
+
+  process_fluor(path_to_yfp, path_to_yfp_alt, back_sub);
+
+
+  setBatchMode(true);
+  for (i=0;i<yfp_slices;i++) {
+    open(path_to_yfp_alt);
+    yfp_ID = getImageID();
+    slice = i+1;
+    time += interval;
+    times[i] = time;
+    path_to_sel = sel_dir+fld_dlm+slice+".zip";
+
+    roiManager("Reset");
+    run("Clear Results");
+    setResult("Slice", 0, slice);
+    setSlice(slice);
+
+    if ( skip(skip_array, slice) ) {
+      slice_fluor_means[i] = blank_cell;
+      slice_conc_means[i]  = blank_cell;
+      slice_area_means[i]  = blank_cell;
+
+      slice_fluor_sds[i]   = blank_cell;
+      slice_conc_sds[i]    = blank_cell;
+      slice_area_sds[i]    = blank_cell;
+
+      slice_fluor_cvs[i]   = blank_cell;
+      slice_conc_cvs[i]    = blank_cell;
+      slice_area_cvs[i]    = blank_cell;
+    }
+    else {
+      makeRectangle(bg_region[0],bg_region[1],bg_region[2],bg_region[3]);
+      run("Measure");
+      bg = getResult("Mean");
+      run("Select None");
+
+      n = moveSelections(path_to_sel,adjusted[0],adjusted[1],adjusted[2],1);
+      roiManager("Save",sel_dir+fld_dlm+"adj_"+slice+".zip");
+
+	//Brendan: Is this false?
+      if ( n == 0 ) {
+        slice_fluor_means[i] = blank_cell;
+        slice_conc_means[i]  = blank_cell;
+        slice_area_means[i]  = blank_cell;
+
+        slice_fluor_sds[i]   = blank_cell;
+        slice_conc_sds[i]    = blank_cell;
+        slice_area_sds[i]    = blank_cell;
+
+        slice_fluor_cvs[i]   = blank_cell;
+        slice_conc_cvs[i]    = blank_cell;
+        slice_area_cvs[i]    = blank_cell;
+      }
+      else {
+        run("Set Scale...", "distance=0 known=0 pixel=1 unit=pixel");
+        mean_sum = 0;
+        conc_sum = 0;
+        area_sum = 0;
+        squared_mean_sum = 0;
+        squared_conc_sum = 0;
+        squared_area_sum = 0;
+        passed = 0;
+        for(j=0;j<n;j++) {
+          total   += 1;
+          filtered = 1;
+          num      = j+1;
+          roiManager("Select",j);
+          roiManager("Measure");
+          X = getResult("X");
+          Y = getResult("Y");
+          circ = getResult("Circ.");
+          mode = getResult("Mode");
+          med  = getResult("Median");
+          mean = getResult("Mean");
+          area = getResult("Area");
+          // area = preAdjArea(slice, j);
+
+          conc = calc_fluor_conc(area, mean);
+
+	//Brendan: It might be better to do this check later.
+	//Brendan: Is there some way to just Measure the whole rioManager and save the result for writing?
+          if (circ > circ_thresh && mean > (SN*bg) && area > area_thresh) {
+            filtered  = 0;
+            passed   += 1;
+            mean_sum += mean;
+            area_sum += area;
+            conc_sum += conc;
+            squared_mean_sum += pow(mean,2);
+            squared_conc_sum += pow(conc,2);
+            squared_area_sum += pow(area,2);
+          } 
+          else {
+            filtered = 1;
+            nfiltered += 1;
+            //print("Filtering slice "+slice+" n"+num);
+          }
+
+          print(fh, slice+"\t"+num+"\t"+time+"\t"+X+"\t"+Y+"\t"+circ+"\t"+bg+"\t"+area+"\t"+mean+"\t"+conc+"\t"+mode+"\t"+med+"\t"+filtered);
+
+        }
+        slice_fluor_means[i] = slice_mean(mean_sum,passed);
+        slice_conc_means[i]  = slice_mean(conc_sum,passed);
+        slice_area_means[i]  = slice_mean(area_sum,passed);
+
+        slice_fluor_sds[i] = slice_sd(squared_mean_sum, slice_fluor_means[i], passed);
+        slice_conc_sds[i]  = slice_sd(squared_conc_sum, slice_conc_means[i], passed);
+        slice_area_sds[i]  = slice_sd(squared_area_sum, slice_area_means[i], passed);
+
+        slice_fluor_cvs[i] = slice_cv(slice_fluor_means[i], slice_fluor_sds[i]);
+        slice_conc_cvs[i]  = slice_cv(slice_conc_means[i], slice_conc_sds[i]);
+        slice_area_cvs[i]  = slice_cv(slice_area_means[i], slice_area_sds[i]);
+      }
+    }
+    selectImage(yfp_ID);
+    close();
+  }
+
+  print(fh,"\n");
+
+  // Begin header info.
+  print(fh, "Started on\t"+dayOfWeek+"/"+dayOfMonth+"/"+year+"\tat\t"+hour+":"+minute+":"+second);
+  print(fh, "Rolling ball radius:\t\t"+back_sub);
+  print(fh, "Post-Adjustment Thresholds");
+  print(fh, "Circularity:\t\t"+circ_thresh);
+  print(fh, "Area:\t\t"+area_thresh);
+  print(fh, "Skipping slice(s):\t\t"+report_skip);
+  print(fh, nfiltered+" out of "+total+" filtered ("+(nfiltered/total)*100+"% ).");
+  print(fh,"\n");
+
+  // Begin slice summary
+  print(fh, "Slice\tTime\tBackground\tFluor Mean\tFluor SD\tFluor CV\tConc\tConc SD\tConc CV\tArea Mean\tArea SD\tArea CV");
+  for (i=0;i<yfp_slices;i++) {
+    print(fh, (i+1)+"\t"+times[i]+"\t"+bg+"\t"+slice_fluor_means[i]+"\t"+slice_fluor_sds[i]+"\t"+slice_fluor_cvs[i]+"\t"+slice_conc_means[i]+"\t"+slice_conc_sds[i]+"\t"+slice_conc_cvs[i]+"\t"+slice_area_means[i]+"\t"+slice_area_sds[i]+"\t"+slice_area_cvs[i]);
+  }
+  //Brendan: I don't know if we need to worry about this, but this exits ImageJ. 
+  //Brendan: This is not very convenient as I usually use ImageJ again for the
+  //Brendan: visualization.
+  //run("Quit");
+}
+
+function process_bf(path) {
+  setBatchMode(true);
+  open(path);
+  id = getImageID();
+  remove_slices(skip_array, id);
+  run("Gaussian Blur...", "sigma=2 stack");
+  run("Enhance Contrast", "saturated=34 normalize_all use");
+  run("8-bit");
+  saveAs("Tiff",stack_dir+fld_dlm+bf_alt_name);
+  close();
+  setBatchMode(false);
+}
+
+function get_bg_region(path) {
+  open(path);
+  waitForUser("Select Background Region");
+  getSelectionBounds(bg_x,bg_y,bg_w,bg_h);
+  close();
+  return newArray(bg_x,bg_y,bg_w,bg_h);
+}
+
+function process_fluor (path,alt_path,background) {
+    setBatchMode(true);
+    open(path);
+    if (background != 0)
+      run("Subtract Background...", "rolling="+background+" stack");
+    saveAs("Tiff",alt_path);
+    close();
+    setBatchMode(false);
+}
+
+function preAdjArea(slice, selection) {
+  roiManager("Open", sel_dir+fld_dlm+slice+".zip");
+  roiManager("Select",selection);
+  roiManager("Measure");
+  return getResult("Area");
+}
+
+function delete_dir (dir, files) {
+  for (i=0;i<files.length;i++) {
+    File.delete(dir+fld_dlm+files[i]);
+  }
+}
+
+function remove_slices(rem, id) {
+  selectImage(id);
+  if (rem[0] == '')  return nSlices();
+
+  rem_copy = copy_arr(rem);
+
+  for (i=0;i<rem_copy.length;i++) {
+    selectImage(id);
+    setSlice(rem_copy[i]);
+    run("Delete Slice");
+    if (nSlices() != 1) {
+      for (j=0;j<rem_copy.length;j++) {
+        rem_copy[j] -= 1;
+      }
+    }
+  }
+  return nSlices();
+}
+
+function copy_arr(arr) {
+  arr_copy = newArray(arr.length);
+  for (k=0;k<arr.length;k++) {
+    arr_copy[k] = arr[k];
+  }
+  return arr_copy;
+}
+
+function skip(arr, s) {
+  if (arr[0] == '') return 0;
+  for (i=0;i<arr.length;i++) {
+    if (arr[i] == s) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+
+function adjustSelection(sel_dir, img_id) {
+
+  adj = newArray(3);
+  x = 0; y = 0; s = 0;
+  selectImage(yfp_id);
+  roiManager("Open", sel_dir);
+  setOption("Show All",true);
+  run("Select None");
+  bad = getBoolean("Adjust selections?");
+  while (bad == 1) {
+    temp = moveSelections(sel_dir,x,y,s,0);
+    bad = getBoolean("Adjust selections?");
+    adj[0] += temp[0]; adj[1] += temp[1]; adj[2] += temp[2];
+  }
+  return adj;
+}
+
+function moveSelections(path, dx, dy, ds, auto) {
+  requires("1.38e");
+
+  if (auto == 0) {
+    Dialog.create("Move Selections");
+    Dialog.addNumber("X Displacement:", 0);
+    Dialog.addNumber("Y Displacement:", 0);
+    Dialog.addNumber("Shrink by", 0);
+    Dialog.show();
+    dx = Dialog.getNumber();
+    dy = Dialog.getNumber();
+    ds = -Dialog.getNumber();
+  }
+
+  if (auto == 1) {
+    roiManager("Open", path);
+  }
+
+  n = roiManager("count");
+
+  if (n==0)
+    return 0;
+  
+  // "Enlarge" function only works for first slice presented
+  // to it.  Be sure to open new image (as opposed to just
+  // selecting a new slice) each time adjustments need to be made.
+  for (i=0; i<n; i++) {
+    roiManager('select', i);
+    getSelectionBounds(x, y, w, h);
+    setSelectionLocation(x+dx, y+dy);
+    run("Enlarge...", "enlarge="+ds);
+    roiManager('update');
+  }
+
+  if (auto == 0) {
+    r = newArray(dx,dy,ds);
+    return r;
+  }
+  else { return n; }
+}
+
+
+function analyzeParticles(sarr, s, c, interval, dir, fh) {
+  setBatchMode(true); 
+  print(fh, "Slice\tTime\tln(Count)\tCount");
+  time = -interval;
+  border = 1;
+  total_slices = sarr.length + seg_files.length;
+  slice_count = 0;
+  last_seg_name = 0;
+  for (i=0;i<seg_files.length; i++) {
+    slice_count += 1;
+    cell_count = 0;
+    log_count  = 0;
+
+    open(seg_dir+fld_dlm+seg_files[i]);
+    seg_split = split(File.name(),'.');
+    seg_name  = seg_split[0];
+    last_seg_name = parseInt(seg_name);
+
+    time += interval;
+
+    if (seg_name > slice_count) {
+      cell_count = blank_cell;
+      log_count  = blank_cell;
+      i--;
+    }
+    else {
+      // Run once without excluding on edges for a more accurate cell count.
+      run("Analyze Particles...", "size="+s+" circularity="+c+" show=Nothing clear add");
+      cell_count = roiManager("Count");
+      log_count  = log(cell_count);
+
+      roiManager("Save", count_dir+fld_dlm+seg_name+"_count.zip");
+      run("Select None");
+      roiManager("Reset");
+
+      // Run again excluding edges for more accurate quantitative data.
+      run("Analyze Particles...", "size="+s+" circularity="+c+" show=Nothing exclude clear add");
+      roiManager("Save", sel_dir+fld_dlm+seg_name+".zip");
+      roiManager("Reset");
+    }
+    close();
+    print(fh, slice_count+"\t"+time+"\t"+log_count+"\t"+cell_count);
+  }
+  // Incase the last slice was dropped.
+  if (i+1 < total_slices && sarr[sarr.length-1] != last_seg_name) {
+    slice_count++;
+    time += interval;
+    print(fh, slice_count+"\t"+time+"\t"+blank_cell+"\t"+blank_cell);
+  }
+  print(fh,"\n");
+  setBatchMode(false);
+}
+
+function printa(arr) {
+  for (i=0;i<arr.length;i++) {
+    print(arr[i],"\t");
+  }
+}
+
+function sort(arr) {
+  for (i=0;i<arr.length;i++) {
+    for (j=i;j>0;j--) {
+      x = split(arr[j-1],'.');
+      y = split(arr[j],'.');
+      if (parseInt(x[0]) > parseInt(y[0])) {
+        temp = arr[j];
+        arr[j] = arr[j-1];
+        arr[j-1] = temp;
+      }
+    }
+  }
+}
+
+function stackSplit(all_slices, sarr, stack_path, out_dir) {
+  setBatchMode(true);
+  open(stack_path);
+  stackID = getImageID();
+  width   = getWidth;
+  height  = getHeight;
+
+
+  skipped = 0;
+  for (i=1;i<=all_slices;i++) {
+    selectImage(stackID);
+
+    if (skip(sarr,i)) {
+      skipped++;
+    } 
+    else {
+      setSlice(i-skipped);
+      
+      newImage(i,"8-bit",width,height,1);
+      output_ID = getImageID();
+
+      selectImage(stackID);
+      run("Select All");
+      run("Copy");
+      selectImage(output_ID);
+      run("Paste");
+      run("Invert");
+      saveAs("bmp",out_dir+fld_dlm+i);
+      close();
+    }
+  }
+  run("Select None");
+  selectImage(stackID);
+  close();
+  setBatchMode(false);
+}
+
+function find_stack_maxima(tolerance, open_path, save_path) {
+// Find Stack Maxima
+//
+// This macro runs the Process>Binary>Find Maxima
+// command on all the images in a stack.
+
+  setBatchMode(true);
+  open(open_path);
+  output = 0;
+  ID = getImageID();
+  n = nSlices();
+
+  for (i=1; i<=n; i++) {
+    showProgress(i, n);
+    selectImage(ID);
+    setSlice(i);
+
+    run("Find Maxima...", "noise="+ tolerance +" output=[Segmented Particles]");
+
+    if (output == 0) 
+      output = getImageID();
+    else {
+       run("Select All");
+       run("Copy");
+       close();
+       selectImage(output);
+       run("Add Slice");
+       run("Paste");
+    }
+  }
+  run("Select None");
+  selectImage(ID);
+  close();
+  selectImage(output);
+  saveAs("Tiff",save_path);
+  close();
+  setBatchMode(false);
+}
+
+function mkdir(dir) {
+  if (File.exists(dir) == 0)
+    File.makeDirectory(dir);
+}
+
+function slice_cv(mean, sd) {
+  return sd/mean;
+}
+
+function slice_sd(sum_of_squares, mean, n) {
+  return sqrt(1/n * sum_of_squares - pow(mean,2));
+}
+
+function slice_mean(sum,n) {
+  return sum / n;
+}
+
+function calc_fluor_conc(a, m) {
+  c = 4/(3*sqrt(3.141592654));
+  return ( (a*m)/(c*pow(a,1.5)) );
+}                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  

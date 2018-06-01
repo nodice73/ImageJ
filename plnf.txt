@@ -34,7 +34,7 @@ function main(PROJECT_PATH) {
   WIDTH = HEIGHT = CHANNELS = SLICES = FRAMES = 0;
 
   SIZE = "1-200";
-  CIRC = "0.50-1.0";
+  CIRC = "0.00-1.0";
   RADIUS = 50;
   FM_TOLERANCE = 10;
   AREA_THRESH = 20;
@@ -177,8 +177,8 @@ function main(PROJECT_PATH) {
 
       // Paths images.
       path_to_flat    = position_data_path+position_name+"_flat.tif";
-      path_to_bg_sub  = position_data_path+position_name+"_bg_sub.png";
-      path_to_bg_mask = position_data_path+position_name+"_bg_mask.png";
+      path_to_bg_sub  = position_data_path+position_name+"_bg_sub.tif";
+      path_to_bg_mask = position_data_path+position_name+"_bg_mask.tif";
       path_to_drawing = 
         position_data_path+position_name+"_selection_image.png";
       path_to_cor_fluor = 
@@ -545,11 +545,6 @@ function makeSelections(id,savepath) {
 
   run("Find Maxima...", "noise="+FM_TOLERANCE+" output=[Segmented Particles]");
   run("Select All");
-  List.setMeasurements;
-  mode = List.getValue("Mode");
-  if (mode == 255) {
-    run("Invert");
-  }
 
   run("Analyze Particles...", "size="+SIZE+" circularity="+CIRC+" show=Nothing clear add");
   if (roiManager("count") != 0)

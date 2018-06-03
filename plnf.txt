@@ -44,6 +44,8 @@ function main(PROJECT_PATH) {
   if (!AUTO) {
     Dialog.create("Set Parameters");
     Dialog.addMessage("Brightfield Parameters");
+    Dialog.addMessage("Controls sensitivity when finding maxima");
+    Dialog.addNumber("Find Maxima Threshold:", FM_TOLERANCE,0,3,"");
     Dialog.addMessage("Determines which selections are false positives");
     Dialog.addNumber("Area Threshold:",AREA_THRESH,0,2,"(pixels^2)");
     Dialog.addNumber("SD/Area Threshold:",SD_AREA_THRESH,0,3,"");
@@ -66,6 +68,7 @@ function main(PROJECT_PATH) {
     Dialog.show();
 
     // Brightfield
+    FM_TOLERANCE = Dialog.getNumber();
     AREA_THRESH    = Dialog.getNumber();
     SD_AREA_THRESH = Dialog.getNumber();
 
@@ -155,234 +158,233 @@ function main(PROJECT_PATH) {
       File.makeDirectory(position_data_path);
 
 
-      image = getImage(wl_path);
-      path_to_image = wl_path+image;
-      image_name = replace(image,'.tif',"");
+      images = getImages(wl_path);
+      for (img_idx=0; img_idx<images.length; img_idx++) {
+        image = images[img_idx];
+        path_to_image = wl_path+image;
+        image_name = replace(image,'.tif',"");
+        print("    "+image_name+"...");
+        tp_idx = indexOf(image_name, "_");
+        timepoint = (substring(image_name, tp_idx+1, tp_idx+5));
 
-      skip = 0;
-      for (q=0;q<skip_array.length;q++) {
-        if ( matches(File.getName(skip_array[q]), 
-             File.getName(path_to_image)) ) 
-        {
-          skip = 1;
-        }
-      }
-
-      open(path_to_image);
-      getDimensions(WIDTH,HEIGHT,CHANNELS,SLICES,FRAMES);
-      original_image_id = getImageID();
-
-      run("Set Measurements...", "redirect=None decimal=3");
-      run("Set Scale...", "distance=0 known=0 pixel=1 unit=pixel global");
-
-      // Paths images.
-      path_to_flat    = position_data_path+position_name+"_flat.tif";
-      path_to_bg_sub  = position_data_path+position_name+"_bg_sub.tif";
-      path_to_bg_mask = position_data_path+position_name+"_bg_mask.tif";
-      path_to_drawing = 
-        position_data_path+position_name+"_selection_image.png";
-      path_to_cor_fluor = 
-        position_data_path+position_name+"_"+wl_name+"_corrected.tif";
-
-      // Paths selections.
-      path_to_bg_selection = 
-        position_data_path+position_name+"_"+wl_name+"_bg_selection.zip";
-      path_to_initial_selections = 
-        position_data_path+position_name+"_initial_selections.zip";
-      path_to_final_selections = 
-        position_data_path+position_name+"_final_selections.zip";
-
-      // Path to data files
-      path_to_data = position_data_path+position_name+"_"+
-                     wl_name+"_"+SD_ABOVE_BG+"sd_data.txt";
-
-      File.makeDirectory(position_data_path);
-      path_to_compiled = COMPILED_DATA_PATH+position_name+"_"+
-                         SD_ABOVE_BG+"sd_compiled.txt";
-
-
-
-      roiManager("Reset");
-
-      if ( matches(wl_name, 'WL0') ) {
-        bg_sub_id = flatten(original_image_id);
-        selectImage(bg_sub_id);
-        run("Enhance Contrast", "saturated=0.5 normalize");
-        run("16-bit");
-        save(path_to_flat);
-
-        makeBgMask(bg_sub_id,path_to_bg_selection);
-        removeBackground(bg_sub_id,path_to_bg_selection,path_to_bg_sub);
-        makeSelections(bg_sub_id,path_to_initial_selections);
-        selectImage(bg_sub_id);
-        close();
-
-        n_orig_sels = 0;
-        if (File.exists(path_to_initial_selections)) {
-          roiManager("open",path_to_initial_selections);
-          n_orig_sels = roiManager("count");
-          open(path_to_flat);
-          flat_id = getImageID();
-          run("16-bit");
-
-          // Weed out artifacts by making a list of selections with low 
-          // SD/area.
-          artifact_array = findArtifacts(n_orig_sels);
-          deleteSelections(artifact_array,n_orig_sels);
-          roiManager("Deselect");
-
-          f = File.open(path_to_data);
-
-          selectImage(flat_id);
-          final_bf_counts = roiManager("count");
-          rejected_selections = n_orig_sels-final_bf_counts;
-          x_pos = newArray(final_bf_counts);
-          y_pos = newArray(final_bf_counts);
-          areas = newArray(final_bf_counts);
-          ints  = newArray(final_bf_counts*4);
-          raw_ints  = newArray(final_bf_counts*4);
-          COUNT_ARRAY[count++]  = final_bf_counts;
-          REJECT_ARRAY[pos] = rejected_selections;
-          print(f, "'Find Maxima' Threshold\t"+FM_TOLERANCE);
-          print(f, "SD/Area threshold\t"+SD_AREA_THRESH);
-          print(f, "Total counts\t"+final_bf_counts);
-          print(f, "Deleted\t"+rejected_selections+"\t("+
-                   100*final_bf_counts/n_orig_sels+"%)");
-          print(f, "\n");
-          print(f, "selection\tx\ty\tarea\tmean\tsd\tmax\twavelength\tfluor\tposition\tlocation");
-          for (i=0;i<final_bf_counts;i++) {
-            sel = d2s(i+1,0);
-            roiManager("select",i);
-            roiManager("Rename",sel);
-            List.setMeasurements;
-            area = List.getValue("Area");
-            mean = List.getValue("Mean");
-            x    = List.getValue("X");
-            y    = List.getValue("Y");
-            sd   = List.getValue("StdDev");
-            max  = List.getValue("Max");
-
-            x_pos[i] = x;
-            y_pos[i] = y;
-            areas[i] = area;
-
-            print(f, sel+"\t"+x+"\t"+y+"\t"+area+"\t"+mean+"\t"+sd+"\t"+
-                     max+"\t"+wl_name+"\t"+fluor_name+"\t"+position+"\t"+
-                     location);
+        skip = 0;
+        for (q=0;q<skip_array.length;q++) {
+          if ( matches(File.getName(skip_array[q]), 
+               File.getName(path_to_image)) ) 
+          {
+            skip = 1;
           }
-          run("Select None");
-          File.close(f);
-          roiManager("Save", path_to_final_selections);
-          roiManager("Deselect");
-          roiManager("Reset");
+        }
 
+        open(path_to_image);
+        getDimensions(WIDTH,HEIGHT,CHANNELS,SLICES,FRAMES);
+        original_image_id = getImageID();
 
-          drawSelections(flat_id,
-                         path_to_initial_selections,
-                         path_to_final_selections,
-                         path_to_drawing);
-          drawing_paths[pos] = path_to_drawing;
+        run("Set Measurements...", "redirect=None decimal=3");
+        run("Set Scale...", "distance=0 known=0 pixel=1 unit=pixel global");
 
-          selectImage(flat_id);
+        // Paths to images.
+        path_stub = position_data_path+position_name+"_"+timepoint;
+        path_to_flat    = path_stub+"_flat.tif";
+        path_to_bg_sub  = path_stub+"_bg_sub.tif";
+        path_to_bg_mask = path_stub+"_bg_mask.tif";
+        path_to_drawing = path_stub+"_selection_image.png";
+        path_to_cor_fluor = path_stub+"_"+wl_name+"_corrected.tif";
+
+        // Paths selections.
+        path_to_bg_selection = path_stub+"_"+wl_name+"_bg_selection.zip";
+        path_to_initial_selections = path_stub+"_initial_selections.zip";
+        path_to_final_selections = path_stub+"_final_selections.zip";
+
+        // Path to data files
+        path_to_data = path_stub+"_"+wl_name+"_"+SD_ABOVE_BG+"sd_data.txt";
+
+        File.makeDirectory(position_data_path);
+        path_to_compiled = COMPILED_DATA_PATH+position_name+"_"+
+                           timepoint+"_"+SD_ABOVE_BG+"sd_compiled.txt";
+
+        roiManager("Reset");
+
+        if ( matches(wl_name, 'WL0') ) {
+          bg_sub_id = flatten(original_image_id);
+          selectImage(bg_sub_id);
+          run("Enhance Contrast", "saturated=0.5 normalize");
+          run("16-bit");
+          save(path_to_flat);
+
+          makeBgMask(bg_sub_id,path_to_bg_selection);
+          removeBackground(bg_sub_id,path_to_bg_selection,path_to_bg_sub);
+          makeSelections(bg_sub_id,path_to_initial_selections);
+          selectImage(bg_sub_id);
           close();
 
-        } else { final_bf_counts = 0; }
-        // end of WL0 'if' 
-      } else if ( final_bf_counts != 0 ) {
-        if (first_fluor == true) {
-          fluor_count = newArray(final_bf_counts);
-          first_fluor = false;
-        }
+          n_orig_sels = 0;
+          if (File.exists(path_to_initial_selections)) {
+            roiManager("open",path_to_initial_selections);
+            n_orig_sels = roiManager("count");
+            open(path_to_flat);
+            flat_id = getImageID();
+            run("16-bit");
 
-        selectImage(original_image_id);
-        // Do rolling ball background subtraction to even out image 
-        // background.
-        selectImage(original_image_id);
-        rad = 0.2;
-        run("Subtract Background...", "rolling="+rad+" sliding");
-        rename("rb_sub");
+            // Weed out artifacts by making a list of selections with low 
+            // SD/area.
+            artifact_array = findArtifacts(n_orig_sels);
+            deleteSelections(artifact_array,n_orig_sels);
+            roiManager("Deselect");
 
-        makeBgMask(original_image_id,path_to_bg_selection);
-        orig_bg = getBg(original_image_id,path_to_bg_selection);
+            f = File.open(path_to_data);
 
-        // Remove single pixels different from their neighbors by
-        // the indicated number of sd (i.e., "hot" CCD pixels)
-        run("Remove Outliers...","radius=1 threshold="+
-            round(2*orig_bg[1])+" which=Bright");
+            selectImage(flat_id);
+            final_bf_counts = roiManager("count");
+            rejected_selections = n_orig_sels-final_bf_counts;
+            x_pos = newArray(final_bf_counts);
+            y_pos = newArray(final_bf_counts);
+            areas = newArray(final_bf_counts);
+            ints  = newArray(final_bf_counts*4);
+            raw_ints  = newArray(final_bf_counts*4);
+            COUNT_ARRAY[count++]  = final_bf_counts;
+            REJECT_ARRAY[pos] = rejected_selections;
+            print(f, "'Find Maxima' Threshold\t"+FM_TOLERANCE);
+            print(f, "SD/Area threshold\t"+SD_AREA_THRESH);
+            print(f, "Total counts\t"+final_bf_counts);
+            print(f, "Deleted\t"+rejected_selections+"\t("+
+                     100*final_bf_counts/n_orig_sels+"%)");
+            print(f, "\n");
+            print(f, "selection\tx\ty\tarea\tmean\tsd\tmax\twavelength\tfluor\tposition\tlocation");
+            for (i=0;i<final_bf_counts;i++) {
+              sel = d2s(i+1,0);
+              roiManager("select",i);
+              roiManager("Rename",sel);
+              List.setMeasurements;
+              area = List.getValue("Area");
+              mean = List.getValue("Mean");
+              x    = List.getValue("X");
+              y    = List.getValue("Y");
+              sd   = List.getValue("StdDev");
+              max  = List.getValue("Max");
 
-        //setBatchMode(false);
-        // Determine background mean and sd.
-        makeBgMask(original_image_id,path_to_bg_selection);
-        bg = getBg(original_image_id,path_to_bg_selection);
+              x_pos[i] = x;
+              y_pos[i] = y;
+              areas[i] = area;
 
-        // Get uncorrected intensity values
-        roiManager("Open", path_to_final_selections);
-        wl_counts = 0;
-        f = File.open(path_to_data);
-        print(f, "Background");
-        print(f, "mean\tsd");
-        print(f, bg[0]+"\t"+bg[1]);
-        print(f, "sd threshold\t"+SD_ABOVE_BG);
-        print(f,"selection\tx\ty\tarea\ttot_int\tcor_int\twavelength\tfluor\tposition\tlocation");
-        for (i=0;i<final_bf_counts;i++) {
-          sel = i+1;
-          roiManager("select",i);
-          List.setMeasurements;
-          raw_int = List.getValue("IntDen");
-          area    = List.getValue("Area");
-          intden  = raw_int - area*(bg[0] + SD_ABOVE_BG * bg[1]);
-          if (intden <= 0) {
-            intden = 0;
-          } else {
-            wl_counts++;
-            fluor_count[i] += 1;
+              print(f, sel+"\t"+x+"\t"+y+"\t"+area+"\t"+mean+"\t"+sd+"\t"+
+                       max+"\t"+wl_name+"\t"+fluor_name+"\t"+position+"\t"+
+                       location);
+            }
+            run("Select None");
+            File.close(f);
+            roiManager("Save", path_to_final_selections);
+            roiManager("Deselect");
+            roiManager("Reset");
+
+
+            drawSelections(flat_id,
+                           path_to_initial_selections,
+                           path_to_final_selections,
+                           path_to_drawing);
+            drawing_paths[pos] = path_to_drawing;
+
+            selectImage(flat_id);
+            close();
+
+          } else { final_bf_counts = 0; }
+          // end of WL0 'if' 
+        } else if ( final_bf_counts != 0 ) {
+          if (first_fluor == true) {
+            fluor_count = newArray(final_bf_counts);
+            first_fluor = false;
           }
 
-          ints[i+(final_bf_counts*(wl-1))] = intden;
-          raw_ints[i+(final_bf_counts*(wl-1))] = raw_int;
+          selectImage(original_image_id);
+          // Do rolling ball background subtraction to even out image 
+          // background.
+          selectImage(original_image_id);
+          rad = 0.2;
+          run("Subtract Background...", "rolling="+rad+" sliding");
+          rename("rb_sub");
 
-          print(f, sel+"\t"+x_pos[i]+"\t"+y_pos[i]+"\t"+areas[i]+"\t"+
-                   raw_int+"\t"+intden+"\t"+wl_name+"\t"+fluor_name+"\t"+
-                   position+"\t"+location);
+          makeBgMask(original_image_id,path_to_bg_selection);
+          orig_bg = getBg(original_image_id,path_to_bg_selection);
 
-        }
-        roiManager("reset");
-        run("Select None");
-        selectImage(original_image_id);
-        save(path_to_cor_fluor);
+          // Remove single pixels different from their neighbors by
+          // the indicated number of sd (i.e., "hot" CCD pixels)
+          run("Remove Outliers...","radius=1 threshold="+
+              round(2*orig_bg[1])+" which=Bright");
 
-        COUNT_ARRAY[count++] = wl_counts;
-        File.close(f);
-        selectImage(original_image_id);
-        close();
+          //setBatchMode(false);
+          // Determine background mean and sd.
+          makeBgMask(original_image_id,path_to_bg_selection);
+          bg = getBg(original_image_id,path_to_bg_selection);
 
-      } // end of other wavelengths
+          // Get uncorrected intensity values
+          roiManager("Open", path_to_final_selections);
+          wl_counts = 0;
+          f = File.open(path_to_data);
+          print(f, "Background");
+          print(f, "mean\tsd");
+          print(f, bg[0]+"\t"+bg[1]);
+          print(f, "sd threshold\t"+SD_ABOVE_BG);
+          print(f,"selection\tx\ty\tarea\ttot_int\tcor_int\twavelength\tfluor\tposition\tlocation");
+          for (i=0;i<final_bf_counts;i++) {
+            sel = i+1;
+            roiManager("select",i);
+            List.setMeasurements;
+            raw_int = List.getValue("IntDen");
+            area    = List.getValue("Area");
+            intden  = raw_int - area*(bg[0] + SD_ABOVE_BG * bg[1]);
+            if (intden <= 0) {
+              intden = 0;
+            } else {
+              wl_counts++;
+              fluor_count[i] += 1;
+            }
 
-      if (wls > 1) {
-        fluor_name_string="";
-        for (t=1;t<wls;t++) {
-          if (t == wls-1) {
-            fluor_name_string = fluor_name_string + fluor_names[t];
-          } else {
-            fluor_name_string = fluor_name_string + fluor_names[t] + "\t";
+            ints[i+(final_bf_counts*(wl-1))] = intden;
+            raw_ints[i+(final_bf_counts*(wl-1))] = raw_int;
+
+            print(f, sel+"\t"+x_pos[i]+"\t"+y_pos[i]+"\t"+areas[i]+"\t"+
+                     raw_int+"\t"+intden+"\t"+wl_name+"\t"+fluor_name+"\t"+
+                     position+"\t"+location);
+
           }
-        }
+          roiManager("reset");
+          run("Select None");
+          selectImage(original_image_id);
+          save(path_to_cor_fluor);
 
-        f = File.open(path_to_compiled);
-        print(f, "selection\tx\ty\tarea\t"+fluor_name_string);
-        sel=0;
-        for (t=0;t<final_bf_counts;t++) {
-          data_string = d2s(sel+1,0)+"\t"+x_pos[t]+"\t"+y_pos[t]+"\t"
-                        +areas[t];
-          for (u=0; u<wls-1; u++) {
-            data_string = 
-              data_string+"\t"+d2s(raw_ints[u*final_bf_counts+sel],0);
+          COUNT_ARRAY[count++] = wl_counts;
+          File.close(f);
+          selectImage(original_image_id);
+          close();
+
+        } // end of other wavelengths
+
+        if (wls > 1) {
+          fluor_name_string="";
+          for (t=1;t<wls;t++) {
+            if (t == wls-1) {
+              fluor_name_string = fluor_name_string + fluor_names[t];
+            } else {
+              fluor_name_string = fluor_name_string + fluor_names[t] + "\t";
+            }
           }
-          print(f, data_string);
-          sel++;
+
+          f = File.open(path_to_compiled);
+          print(f, "selection\tx\ty\tarea\t"+fluor_name_string);
+          sel=0;
+          for (t=0;t<final_bf_counts;t++) {
+            data_string = d2s(sel+1,0)+"\t"+x_pos[t]+"\t"+y_pos[t]+"\t"
+                          +areas[t];
+            for (u=0; u<wls-1; u++) {
+              data_string = 
+                data_string+"\t"+d2s(raw_ints[u*final_bf_counts+sel],0);
+            }
+            print(f, data_string);
+            sel++;
+          }
+          File.close(f);
         }
-        File.close(f);
-      }
+      } // end of image block
     } // end of wavelength block
     if (wls > 1) UNTAGGED_ARRAY[pos] = findUntagged(fluor_count);
     print("Done");
@@ -553,19 +555,19 @@ function makeSelections(id,savepath) {
   close();
 }
 
-function getImage(path) {
+function getImages(path) {
   contents = getFileList(path);
   tifs = 0;
-  tif_name = "";
+  tif_names = newArray(contents.length);
   for (i=0;i<contents.length;i++) {
     if ( matches(contents[i], '.*\.tif') ) {
-      tif_name = contents[i];
+      tif_names[tifs] = contents[i];
       tifs++;
     }
   }
-  if (tifs > 1) exit("Too many images in folder '"+path+"'.");
   if (tifs == 0) exit("No tifs in folder '"+path+"'.");
-  return tif_name;
+  tif_names = Array.trim(tif_names, tifs);
+  return tif_names;
 }
 
 function getMatchingDirs(path,match) {

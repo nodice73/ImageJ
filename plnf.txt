@@ -1,4 +1,4 @@
-// vim: set filetype=javascript shiftwidth=2 tabstop=2 expandtab :
+// vim: set filetype=javascript shiftwidth=4 tabstop=4 expandtab :
 
 macro "plnf" {
   path = getArgument;
@@ -11,7 +11,7 @@ function main(PROJECT_PATH) {
   TURRET_MAX = 6;
   FS = File.separator();
   if (FS == "\\") FS = "\\\\";
- 
+
   run("Options...", "iterations=1 black edm=Overwrite count=1");
 
   AUTO = true;
@@ -52,10 +52,10 @@ function main(PROJECT_PATH) {
 
     Dialog.addMessage("To determine cell counts in each channel");
     Dialog.addNumber("Standard deviations above background:",
-                     SD_ABOVE_BG,1,2,"");
+        SD_ABOVE_BG,1,2,"");
 
     FPS_AND_DYES = newArray("Unassigned","DAPI","CFP","EGFP","Venus",
-                            "mOrange","DsRed","TO-PRO");
+        "mOrange","DsRed","TO-PRO");
     Dialog.addMessage("Filter assignments (Use the fluorophore/dye name)");
     Dialog.addMessage("WL0: brightfield");
     Dialog.addChoice("WL1:",FPS_AND_DYES,FPS_AND_DYES[0]);
@@ -139,38 +139,44 @@ function main(PROJECT_PATH) {
       }
     }
 
-    var x_pos, y_pos, areas, ints, fluor_count;
-    final_bf_counts = 0;
-    first_fluor=true;
-    for (wl=0;wl<wl_dirs.length;wl++) {
-      wl_name = replace(wl_dirs[wl],"/","");
-      fluor_name = wl_map[wl];
 
-      print("  "+wl_name+"...");
+    // Get images in WL0 folder. Expect to find corresponding image
+    // in other WL folders.
+    images = getImages(position_path+"WL0");
+    for (img_idx=0; img_idx<images.length; img_idx++) {
+      var x_pos, y_pos, areas, ints, fluor_count;
+      final_bf_counts = 0;
+      first_fluor=true;
 
-      if (pos == 0) {
-        wl_names[wl]    = wl_name;
-        fluor_names[wl] = fluor_name;
-        wls++;
-      }
-
-      wl_path = position_path+wl_dirs[wl];
-      File.makeDirectory(position_data_path);
-
-
-      images = getImages(wl_path);
-      for (img_idx=0; img_idx<images.length; img_idx++) {
+      for (wl=0;wl<wl_dirs.length;wl++) {
         image = images[img_idx];
+
+        wl_name = replace(wl_dirs[wl],"/","");
+        fluor_name = wl_map[wl];
+
+        if (pos == 0) {
+          wl_names[wl]    = wl_name;
+          fluor_names[wl] = fluor_name;
+          wls++;
+        }
+
+        print("  "+wl_name+"...");
+
+        image = replace(image, 'WL0', wl_name);
+        wl_path = position_path+wl_dirs[wl];
+        File.makeDirectory(position_data_path);
+
         path_to_image = wl_path+image;
         image_name = replace(image,'.tif',"");
-        print("    "+image_name+"...");
         tp_idx = indexOf(image_name, "_");
         timepoint = (substring(image_name, tp_idx+1, tp_idx+5));
+
+        print("    "+image_name+"...");
 
         skip = 0;
         for (q=0;q<skip_array.length;q++) {
           if ( matches(File.getName(skip_array[q]), 
-               File.getName(path_to_image)) ) 
+                File.getName(path_to_image)) ) 
           {
             skip = 1;
           }
@@ -201,7 +207,7 @@ function main(PROJECT_PATH) {
 
         File.makeDirectory(position_data_path);
         path_to_compiled = COMPILED_DATA_PATH+position_name+"_"+
-                           timepoint+"_"+SD_ABOVE_BG+"sd_compiled.txt";
+          timepoint+"_"+SD_ABOVE_BG+"sd_compiled.txt";
 
         roiManager("Reset");
 
@@ -248,7 +254,7 @@ function main(PROJECT_PATH) {
             print(f, "SD/Area threshold\t"+SD_AREA_THRESH);
             print(f, "Total counts\t"+final_bf_counts);
             print(f, "Deleted\t"+rejected_selections+"\t("+
-                     100*final_bf_counts/n_orig_sels+"%)");
+                100*final_bf_counts/n_orig_sels+"%)");
             print(f, "\n");
             print(f, "selection\tx\ty\tarea\tmean\tsd\tmax\twavelength\tfluor\tposition\tlocation");
             for (i=0;i<final_bf_counts;i++) {
@@ -268,8 +274,8 @@ function main(PROJECT_PATH) {
               areas[i] = area;
 
               print(f, sel+"\t"+x+"\t"+y+"\t"+area+"\t"+mean+"\t"+sd+"\t"+
-                       max+"\t"+wl_name+"\t"+fluor_name+"\t"+position+"\t"+
-                       location);
+                  max+"\t"+wl_name+"\t"+fluor_name+"\t"+position+"\t"+
+                  location);
             }
             run("Select None");
             File.close(f);
@@ -279,9 +285,9 @@ function main(PROJECT_PATH) {
 
 
             drawSelections(flat_id,
-                           path_to_initial_selections,
-                           path_to_final_selections,
-                           path_to_drawing);
+                path_to_initial_selections,
+                path_to_final_selections,
+                path_to_drawing);
             drawing_paths[pos] = path_to_drawing;
 
             selectImage(flat_id);
@@ -343,8 +349,8 @@ function main(PROJECT_PATH) {
             raw_ints[i+(final_bf_counts*(wl-1))] = raw_int;
 
             print(f, sel+"\t"+x_pos[i]+"\t"+y_pos[i]+"\t"+areas[i]+"\t"+
-                     raw_int+"\t"+intden+"\t"+wl_name+"\t"+fluor_name+"\t"+
-                     position+"\t"+location);
+                raw_int+"\t"+intden+"\t"+wl_name+"\t"+fluor_name+"\t"+
+                position+"\t"+location);
 
           }
           roiManager("reset");
@@ -374,7 +380,7 @@ function main(PROJECT_PATH) {
           sel=0;
           for (t=0;t<final_bf_counts;t++) {
             data_string = d2s(sel+1,0)+"\t"+x_pos[t]+"\t"+y_pos[t]+"\t"
-                          +areas[t];
+              +areas[t];
             for (u=0; u<wls-1; u++) {
               data_string = 
                 data_string+"\t"+d2s(raw_ints[u*final_bf_counts+sel],0);
@@ -384,8 +390,8 @@ function main(PROJECT_PATH) {
           }
           File.close(f);
         }
-      } // end of image block
-    } // end of wavelength block
+      } // end of wavelength block
+    } // end of image block
     if (wls > 1) UNTAGGED_ARRAY[pos] = findUntagged(fluor_count);
     print("Done");
   } // end of position block
@@ -409,7 +415,7 @@ function main(PROJECT_PATH) {
   for (i=0;i<position_names.length;i++) {
     count_string = "";
     count_string = count_string+position_names[i]+"\t"+REJECT_ARRAY[i]+"\t"
-                   +UNTAGGED_ARRAY[i]+"\t";
+      +UNTAGGED_ARRAY[i]+"\t";
     position_total = 0;
     bf_counts = 0;
     for (wl=0;wl<wls;wl++) {
@@ -419,7 +425,7 @@ function main(PROJECT_PATH) {
 
       if (wl==0) bf_counts = wl_counts;
     }
-    
+
     print(f, count_string);
   }
   File.close(f);
@@ -638,7 +644,7 @@ function removeBackground(id,bgpath,savepath) {
   setForegroundColor(255,255,255);
   roiManager("open",bgpath);
   roiManager("Select", 0);
-  
+
   // Lowest SD will be the background selection.
   List.setMeasurements;
   sd = List.getValue("StdDev");
@@ -697,7 +703,7 @@ function printa(arr) {
 function getBg(id,mask) {
   roiManager("reset");
   selectImage(id);
-  
+
 
   roiManager("open",mask);
   roiManager("select",0);

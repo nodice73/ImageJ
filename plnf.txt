@@ -88,15 +88,20 @@ function main(PROJECT_PATH) {
         }
     }
 
-    position_names = newArray(POSITION_DIRS.length);
     wl_names    = newArray(TURRET_MAX+1);
     fluor_names = newArray(TURRET_MAX);
+    position_names = newArray();
+    tp_array = newArray();
+    wl_array = newArray();
+    n_images = 0;
     for (i=0;i<wl_names.length;i++) wl_names[i] = "";
 
 
-    REJECT_ARRAY   = newArray(POSITION_DIRS.length);
-    UNTAGGED_ARRAY = newArray(POSITION_DIRS.length);
+    COUNT_ARRAY = newArray();
+    REJECT_ARRAY = newArray();
+    //UNTAGGED_ARRAY = newArray();
     count = 0;
+    tp_count = 0;
     wls = 0;
 
     path_to_counts = 
@@ -121,12 +126,14 @@ function main(PROJECT_PATH) {
         location = substring(position_name,lengthOf(position_name)-1);
 
         print("Processing "+position_name+"...");
-        position_names[pos] = position_name;
         position_path = PROJECT_PATH+POSITION_DIRS[pos];
         position_data_path = POSITION_RESULTS_PATH+position_name+"_data"+FS;
 
         wl_string = "WL[0-9]+";
         wl_dirs = getMatchingDirs(position_path,wl_string);
+        if (pos==0) {
+            wls = wl_dirs.length;
+        }
 
         // 'Compiled' folder only relevant if fluorescent images are
         // going to be used.
@@ -144,8 +151,13 @@ function main(PROJECT_PATH) {
         // in other WL folders.
         images = getImages(position_path+"WL0");
         if (pos==0) {
-            COUNT_ARRAY = newArray(
-                    POSITION_DIRS.length*wl_dirs.length*images.length);
+            n_images = POSITION_DIRS.length*wl_dirs.length*images.length;
+            tp_array = newArray(n_images);
+            wl_array = newArray(n_images);
+            COUNT_ARRAY = newArray(n_images);
+            REJECT_ARRAY = newArray(n_images);
+            //UNTAGGED_ARRAY = newArray(n_images);
+            position_names = newArray(n_images);
         }
         for (img_idx=0; img_idx<images.length; img_idx++) {
             image = images[img_idx];
@@ -159,12 +171,6 @@ function main(PROJECT_PATH) {
                 wl_name = replace(wl_dirs[wl],"/","");
                 fluor_name = wl_map[wl];
 
-                if (pos==0 && img_idx==0) {
-                    wl_names[wl]    = wl_name;
-                    fluor_names[wl] = fluor_name;
-                    wls++;
-                }
-
                 print("    "+wl_name+"...");
 
                 image = replace(image, 'WL0', wl_name);
@@ -175,7 +181,14 @@ function main(PROJECT_PATH) {
                 image_name = replace(image,'.tif',"");
                 tp_idx = indexOf(image_name, "_");
                 timepoint = (substring(image_name, tp_idx+1, tp_idx+5));
+                tp_array[count] = timepoint;
+                wl_array[count] = wl_name;
+                position_names[count] = position_name;
 
+                if (pos==0 && img_idx==0) {
+                    wl_names[wl]    = wl_name;
+                    fluor_names[wl] = fluor_name;
+                }
 
                 skip = 0;
                 for (q=0;q<skip_array.length;q++) {
@@ -256,8 +269,8 @@ function main(PROJECT_PATH) {
                         areas = newArray(final_bf_counts);
                         ints  = newArray(final_bf_counts*4);
                         raw_ints  = newArray(final_bf_counts*4);
-                        COUNT_ARRAY[count++]  = final_bf_counts;
-                        REJECT_ARRAY[pos] = rejected_selections;
+                        COUNT_ARRAY[count]  = final_bf_counts;
+                        REJECT_ARRAY[count] = rejected_selections;
                         print(f, "'Find Maxima' Threshold\t"+FM_TOLERANCE);
                         print(f, "SD/Area threshold\t"+SD_AREA_THRESH);
                         print(f, "Total counts\t"+final_bf_counts);
@@ -370,7 +383,7 @@ function main(PROJECT_PATH) {
                     selectImage(original_image_id);
                     save(path_to_cor_fluor);
 
-                    COUNT_ARRAY[count++] = wl_counts;
+                    COUNT_ARRAY[count] = wl_counts;
                     File.close(f);
                     selectImage(original_image_id);
                     close();
@@ -405,11 +418,12 @@ function main(PROJECT_PATH) {
                     }
                     File.close(f);
                 }
+                count++;
             } // end of wavelength block
+            print("Done");
         } // end of image block
-        if (wls > 1) UNTAGGED_ARRAY[pos] = findUntagged(fluor_count);
-        print("Done");
     } // end of position block
+
 
     // Write lists of paths to images for easy stack opening.
     f = File.open(path_to_drawing_list);
@@ -419,27 +433,19 @@ function main(PROJECT_PATH) {
     File.close(f);
 
     // Write the counts report
-    fluor_name_string = "position\trejected\tuntagged\t";
-    for (i=0;i<wls;i++) {
-        fluor_name_string = fluor_name_string + fluor_names[i] + "\t";
-    } 
+    fluor_name_string = "position\ttimepoint\twavelength\t" +
+                        "counted\trejected";
 
     f = File.open(path_to_counts);
     print(f, fluor_name_string);
 
-    for (i=0;i<position_names.length;i++) {
+    for (i=0;i<n_images;i++) {
         count_string = "";
-        count_string = count_string+position_names[i]+"\t"+REJECT_ARRAY[i]+"\t"
-            +UNTAGGED_ARRAY[i]+"\t";
-        position_total = 0;
-        bf_counts = 0;
-        for (wl=0;wl<wls;wl++) {
-            wl_counts = COUNT_ARRAY[(wls*i)+wl];
-            count_string = count_string+wl_counts+"\t";
-            position_total += wl_counts;
-
-            if (wl==0) bf_counts = wl_counts;
-        }
+        count_string = count_string+position_names[i]+"\t"+
+                       tp_array[i]+"\t"+
+                       wl_array[i]+"\t"+
+                       COUNT_ARRAY[i]+"\t"+
+                       REJECT_ARRAY[i]+"\t";
 
         print(f, count_string);
     }

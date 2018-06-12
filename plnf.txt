@@ -52,7 +52,7 @@ function main(PROJECT_PATH) {
 
         Dialog.addMessage("To determine cell counts in each channel");
         Dialog.addNumber("Standard deviations above background:",
-                SD_ABOVE_BG,1,2,"");
+                         SD_ABOVE_BG,1,2,"");
 
         FPS_AND_DYES = newArray("Unassigned","DAPI","CFP","EGFP","Venus",
                                 "mOrange","DsRed","TO-PRO");
@@ -204,7 +204,8 @@ function main(PROJECT_PATH) {
                 original_image_id = getImageID();
 
                 run("Set Measurements...", "redirect=None decimal=3");
-                run("Set Scale...", "distance=0 known=0 pixel=1 unit=pixel global");
+                run("Set Scale...",
+                    "distance=0 known=0 pixel=1 unit=pixel global");
 
                 // Paths to images.
                 path_stub = position_data_path+position_name+"_"+timepoint;
@@ -572,10 +573,12 @@ function makeSelections(id,savepath) {
     roiManager("reset");
     selectImage(id);
 
-    run("Find Maxima...", "noise="+FM_TOLERANCE+" output=[Segmented Particles]");
+    run("Find Maxima...",
+        "noise="+FM_TOLERANCE+" output=[Segmented Particles]");
     run("Select All");
 
-    run("Analyze Particles...", "size="+SIZE+" circularity="+CIRC+" show=Nothing clear add");
+    run("Analyze Particles...",
+        "size="+SIZE+" circularity="+CIRC+" show=Nothing clear add");
     if (roiManager("count") != 0)
         roiManager("Save", savepath);
     roiManager("reset");

@@ -5,15 +5,17 @@
 //
 // There are no dependencies for this plugin. However, the folder structure is
 // important. The "project_path" should contain folders that represent
-// positions of the form [A-Z][0-9][0-9][a-z]. The first three characters 
-// correspond to positions in a microtiter plate. For example, B06. The fourth
-// character corresponds to a position within that well.
+// locations of the form [A-Z][0-9][0-9][a-z]. The first three characters
+// correspond to positions in a microtiter plate. For example, B06, which
+// would correspond to the second row and sixth column of a standard 96-well
+// microtiter plate.
+// The fourth character corresponds to an optional position within that well.
 //
 // In each position folder, there should be folders representing the
 // wavelength of light used in acquisition of the form WL[0-9]+. WL0 should
 // contain brightfield images.
 //
-// Example images can be found at
+// An example project folder can be found at
 //      https://github.com/nodice73/ImageJ/tree/master. 
 // Download and run the "test_images" folder.
 
